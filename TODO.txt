@@ -1,0 +1,223 @@
+Global Definition of Done (applies to every task)
+	•	✅ Code has unit tests where it makes sense.
+	•	✅ All tests pass locally.
+	•	✅ CLI help (--help) remains accurate.
+	•	✅ No hard-coded paths; respects ~/.config/simple_sync.
+	•	✅ No regression to existing features (when applicable).
+
+⸻
+
+Epic 1 – Project Setup & Scaffolding
+
+Goal: Get a minimal, runnable Python package + CLI skeleton in place.
+	•	1.1 Create repo structure
+	•	simple_sync/ package with __init__.py, cli.py.
+	•	tests/ with placeholder test modules.
+	•	README.md with high-level vision.
+	•	1.2 Add packaging config
+	•	Create pyproject.toml using hatchling or setuptools.
+	•	Define entry point simple-sync = simple_sync.cli:main.
+	•	1.3 Implement initial CLI skeleton
+	•	Use argparse or typer for CLI.
+	•	Add stub commands: run, profiles, init, daemon, status, conflicts.
+	•	1.4 Set up basic logging
+	•	Implement simple_sync.logging module.
+	•	Support --verbose/--quiet flags.
+	•	Default logs to stderr for one-off mode.
+	•	1.5 Add basic CI stub (optional early)
+	•	GitHub Actions / GitLab CI to run tests and lint.
+
+⸻
+
+Epic 2 – Config System (~/.config/simple_sync)
+
+Goal: Load/save profiles and global settings from a well-defined config directory.
+	•	2.1 Implement config path resolution
+	•	Determine base config dir:
+	•	Linux/macOS: ~/.config/simple_sync
+	•	Windows: %APPDATA%\simple_sync or similar.
+	•	Create directory tree if missing:
+	•	profiles/, state/, logs/.
+	•	2.2 Define config schema (TOML)
+	•	profile block: name, description, topology (pair for now).
+	•	endpoints.<name>: type (local/ssh), paths, host, etc.
+	•	conflict block: policy, optional prefer, manual behavior.
+	•	ignore block: patterns list.
+	•	schedule block: enabled, interval_seconds, run_on_start.
+	•	Optional ssh block for pre_connect_command, ssh_command.
+	•	2.3 Implement config loader in config.py
+	•	Load profiles/<name>.toml by profile name.
+	•	Validate required keys and endpoint types.
+	•	Provide helpful error messages on invalid configs.
+	•	2.4 Implement simple-sync init
+	•	Interactive prompt to create a new profile (pair of endpoints).
+	•	Generate a TOML file under profiles/NAME.toml.
+	•	Offer to set basic ignore patterns (.git, node_modules, etc.).
+	•	2.5 Implement simple-sync profiles command
+	•	List all profile names, description, and basic status (e.g., last sync time if available).
+
+⸻
+
+Epic 3 – Core Sync Engine for Local ↔ Local
+
+Goal: Build the snapshot + diff + execution engine for local directories only.
+	•	3.1 Define core data types in types.py
+	•	Endpoint (id, type, path, host, etc.).
+	•	FileEntry (path, is_dir, size, mtime, hash optional).
+	•	Change / Operation enums or similar.
+	•	Conflict structure (paths, endpoints, metadata).
+	•	3.2 Implement snapshot builder for local directories (engine/snapshot.py)
+	•	Recursively walk root directory.
+	•	Apply ignore patterns (from config).
+	•	Collect metadata (path, is_dir, size, mtime).
+	•	Return snapshot as dict[path] -> FileEntry.
+	•	3.3 Implement persistent state store (engine/state_store.py)
+	•	Choose JSON or SQLite for first version (per-profile file in state/).
+	•	Store last-sync metadata per (endpoint, path).
+	•	Provide functions:
+	•	load_state(profile_id)
+	•	save_state(profile_id, state)
+	•	get_last_entry(endpoint, path).
+	•	3.4 Implement planner (engine/planner.py) for two endpoints
+	•	Compare current snapshots vs last state.
+	•	Classify each (path) as:
+	•	new on A, new on B, modified on A/B, deleted, unchanged.
+	•	Output:
+	•	list of operations (copy A→B, copy B→A, delete, etc.).
+	•	list of conflicts.
+	•	3.5 Implement executor for local operations (engine/executor.py)
+	•	Apply copy operations via filesystem.
+	•	Create directories as needed.
+	•	Handle deletes (respect config if we later add “no-delete” modes).
+	•	3.6 Implement CLI simple-sync run PROFILE for local-only profiles
+	•	Load profile, build snapshots, plan, and execute.
+	•	Add --dry-run to print plan without modifying anything.
+	•	3.7 Add basic unit tests for snapshot, planner, executor
+	•	Test simple scenarios: A-only, B-only, modify, delete.
+
+⸻
+
+Epic 4 – Conflict Resolution Policies
+
+Goal: Support multiple conflict policies and manual handling.
+	•	4.1 Implement “newest wins” policy
+	•	If both endpoints modified since last sync, choose newer mtime.
+	•	Mark the other side as overwritten in the plan.
+	•	4.2 Implement “prefer endpoint” policy
+	•	If configured (prefer = "local" or "server"), always choose that endpoint when conflicting.
+	•	Document behavior clearly.
+	•	4.3 Implement “manual” policy with copy_both behavior
+	•	On conflict, do not overwrite either path.
+	•	Create additional copy with suffix (e.g., .conflict-{endpoint}-{timestamp}).
+	•	Record conflict in persistent state/log.
+	•	4.4 Implement conflict logging
+	•	Store conflicts per profile in state/ or separate conflicts table/file.
+	•	Include timestamp, endpoints, and chosen resolution.
+	•	4.5 Implement simple-sync conflicts PROFILE command
+	•	Display recent conflicts and their resolution (or unresolved status).
+	•	Provide filters (e.g., unresolved only) for future expansion.
+	•	4.6 Tests for conflict resolution
+	•	Create scenarios to exercise each policy.
+	•	Verify file contents and conflict logs.
+
+⸻
+
+Epic 5 – SSH Transport & Remote Endpoints
+
+Goal: Support local ↔ remote and remote ↔ remote sync via SSH, including MOTD/banner-safe communication.
+	•	5.1 Implement SSH command wrapper (ssh/transport.py)
+	•	Wrapper around subprocess.Popen(["ssh", host, command, ...]).
+	•	Use ssh_command from config if provided.
+	•	Capture stdout/stderr, return exit codes and text.
+	•	5.2 Implement magic marker protocol (ssh/commands.py)
+	•	For any data-driven command, wrap remote command as:
+printf "__SS_BEGIN__\n"; <actual command>; printf "__SS_END__\n"
+	•	Implement helper to read only content between markers, discarding banners / MOTD.
+	•	5.3 Implement remote directory listing + stat
+	•	Use find + stat (or python -c on remote if more portable).
+	•	Parse output into FileEntry for remote snapshot.
+	•	Integrate into snapshot.py with endpoint type ssh.
+	•	5.4 Implement remote file copy
+	•	Option 1: scp wrapper via subprocess.
+	•	Option 2: ssh with cat pipeline (ssh host "cat > file").
+	•	Choose consistent approach and implement for:
+	•	local→remote
+	•	remote→local
+	•	remote→remote (copy via local as relay initially).
+	•	5.5 Integrate remote endpoints into planner & executor
+	•	Extend planner so endpoints are generic (local/ssh).
+	•	Executor chooses appropriate copy method based on endpoint types.
+	•	5.6 Support remote↔remote via local relay
+	•	For remote A ↔ remote B, do:
+	•	A → temp on local → B.
+	•	Ensure temp directory is cleaned up after sync.
+	•	5.7 Add tests (can be integration-ish)
+	•	Use localhost SSH (localhost) with a test user.
+	•	Verify sync behavior over SSH, including banner noise simulated.
+
+⸻
+
+Epic 6 – PIV / SSH Agent Integration
+
+Goal: Play nicely with PIV smartcards and SSH agents, without the daemon handling PINs directly.
+	•	6.1 Add config options for SSH agent handling
+	•	ssh.use_agent boolean.
+	•	Optional ssh.pre_connect_command to load PIV key into agent.
+	•	Optional ssh.env to override env vars if needed (later).
+	•	6.2 Implement pre-connect hook in sync run path
+	•	On first SSH use in a run, execute pre_connect_command if configured.
+	•	Log success/failure clearly.
+	•	6.3 Detect auth failures and surface friendly errors
+	•	If SSH command returns auth error, print hint to check PIV/agent.
+	•	Avoid hanging waiting for interactive password prompts.
+	•	6.4 Ensure daemon mode never tries to read PIN interactively
+	•	If SSH prompts for password/PIN, abort profile sync and log error.
+	•	Make sure daemon stays alive but marks sync as failed.
+	•	6.5 Test with mocked agent / fake pre_connect command
+	•	Unit tests to ensure hook execution order.
+	•	Manual test with PIV-enabled environment.
+
+⸻
+
+Epic 7 – Daemon Mode
+
+Goal: Run syncs continuously based on profile schedules.
+	•	7.1 Implement daemon runner (daemon/runner.py)
+	•	Loop over loaded profiles.
+	•	For each profile with schedule.enabled = true, maintain next-run time.
+	•	Sleep until the earliest next-run across profiles.
+	•	7.2 Integrate sync engine into daemon
+	•	Reuse the same “run profile once” function used by simple-sync run.
+	•	Log to profile-specific log files under logs/.
+	•	7.3 Implement simple-sync daemon CLI command
+	•	Start long-running process.
+	•	Support --once or --foreground mode for debugging.
+	•	7.4 Basic signal handling
+	•	Handle SIGINT/SIGTERM gracefully.
+	•	On shutdown, finish any in-flight sync or abort cleanly.
+	•	7.5 Config reload hook (optional v1)
+	•	On SIGHUP, reload profiles from disk.
+	•	Adjust schedule without restarting daemon.
+	•	7.6 Docs for integrating with systemd/launchd
+	•	Provide example unit file / plist in docs/ or README.
+
+⸻
+
+Epic 8 – Packaging, Binaries & Windows Support
+
+Goal: Make it easy to install and (eventually) run without a Python interpreter.
+	•	8.1 Document Python install path
+	•	pipx install simple-sync as recommended simplest install.
+	•	Add usage examples in README.
+	•	8.2 Add support for building standalone binaries
+	•	Integrate nuitka or PyInstaller in build scripts.
+	•	Create scripts/build-binary.sh (macOS, Linux targets).
+	•	8.3 Test binaries on macOS and Linux
+	•	Verify simple-sync run and daemon work.
+	•	Confirm no Python runtime is required.
+	•	8.4 Plan for Windows support (v2)
+	•	Ensure code avoids POSIX-only assumptions where possible.
+	•	Use ssh from PATH (OpenSSH on Windows 10+ or Git for Windows).
+	•	Note Windows caveats in README.
+
+⸻
