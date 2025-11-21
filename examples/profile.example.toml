@@ -1,0 +1,35 @@
+# Example configuration demonstrating the supported schema.
+
+[profile]
+name = "example"
+description = "Synchronize code between laptop and server."
+topology = "pair"
+
+[conflict]
+policy = "newest"
+prefer = "local"
+manual_behavior = "copy_both"
+
+[ignore]
+patterns = [".git", "node_modules", "__pycache__"]
+
+[schedule]
+enabled = false
+interval_seconds = 3600
+run_on_start = true
+
+[ssh]
+pre_connect_command = "source ~/.ssh/env"
+ssh_command = "ssh"
+use_agent = true
+
+[endpoints.local]
+type = "local"
+path = "~/projects/example"
+description = "Primary development directory."
+
+[endpoints.remote]
+type = "ssh"
+host = "example.com"
+path = "/srv/data/example"
+description = "Server mirror."

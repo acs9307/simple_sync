@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "simple-sync"
+version = "0.0.0"
+description = "A transparent, profile-driven file synchronization tool."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+  { name = "Simple Sync Contributors" },
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+dependencies = []
+
+[project.optional-dependencies]
+binary = ["pyinstaller>=6.0,<7.0"]
+
+[project.scripts]
+simple-sync = "simple_sync.cli:main"
+
+[project.urls]
+Homepage = "https://example.com/simple_sync"
+Repository = "https://example.com/simple_sync/repo"

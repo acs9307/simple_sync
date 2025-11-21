@@ -1,0 +1,39 @@
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Distribution / build artifacts
+dist/
+build/
+*.egg-info/
+.pyinstaller/
+
+# Test outputs
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Editor / OS junk
+.DS_Store
+Thumbs.db
+
+# Local config and temp
+.python-version
+.tool-versions
+/.vscode/
+/.idea/
+
+# Sync state and temp dirs
+/.cache/
+/tmp/
+/logs/
+
+# Docker artifacts
+docker/ssh-agent/__pycache__/

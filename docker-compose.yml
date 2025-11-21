@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  tests:
+    build:
+      context: .
+      dockerfile: docker/ssh-agent/Dockerfile
+    working_dir: /app
+    environment:
+      - PYTHONUNBUFFERED=1
+      # Optional: pass extra args to pytest, e.g., "-k ssh"
+      - PYTEST_ARGS
+    entrypoint: ["bash", "-lc", "pip install pytest && pytest ${PYTEST_ARGS:-}"]

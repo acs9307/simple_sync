@@ -1,0 +1,493 @@
+"""Command-line interface for simple_sync."""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, List, Optional, Sequence
+
+from . import __version__, config, types
+from .daemon import DaemonRunner
+from .engine import executor, planner, snapshot, state_store
+from .logging import configure_logging
+
+Handler = Callable[[argparse.Namespace], int]
+logger = logging.getLogger(__name__)
+DEFAULT_IGNORE_PATTERNS = [".git", "node_modules", "__pycache__"]
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Create the CLI parser with all supported subcommands."""
+    parser = argparse.ArgumentParser(
+        prog="simple-sync",
+        description="Profile-driven file synchronization utility.",
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument(
+        "--config-dir",
+        help="Override the configuration directory (defaults to ~/.config/simple_sync).",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="Increase logging verbosity (can be repeated).",
+    )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="count",
+        default=0,
+        help="Decrease logging verbosity (can be repeated).",
+    )
+    subparsers = parser.add_subparsers(dest="command", metavar="COMMAND", required=True)
+
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Execute a synchronization run for a profile.",
+    )
+    run_parser.add_argument("profile", help="Name of the profile to synchronize.")
+    run_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Plan actions without touching the filesystem (placeholder).",
+    )
+    run_parser.set_defaults(func=_handle_run)
+
+    profiles_parser = subparsers.add_parser(
+        "profiles",
+        help="List configured profiles.",
+    )
+    profiles_parser.add_argument(
+        "--details",
+        action="store_true",
+        help="Show extended profile information (includes file paths).",
+    )
+    profiles_parser.set_defaults(func=_handle_profiles)
+
+    init_parser = subparsers.add_parser(
+        "init",
+        help="Create a new profile via interactive prompts.",
+    )
+    init_parser.add_argument(
+        "profile",
+        nargs="?",
+        help="Optional name for the new profile.",
+    )
+    init_parser.set_defaults(func=_handle_init)
+
+    daemon_parser = subparsers.add_parser(
+        "daemon",
+        help="Manage the long-running synchronization daemon.",
+    )
+    daemon_parser.add_argument(
+        "action",
+        choices=("start",),
+        help="Daemon action to perform.",
+    )
+    daemon_parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Run scheduled profiles once then exit.",
+    )
+    daemon_parser.set_defaults(func=_handle_daemon)
+
+    status_parser = subparsers.add_parser(
+        "status",
+        help="Show the latest sync status for a profile.",
+    )
+    status_parser.add_argument(
+        "profile",
+        nargs="?",
+        help="Profile to inspect; defaults to all.",
+    )
+    status_parser.set_defaults(func=_handle_status)
+
+    conflicts_parser = subparsers.add_parser(
+        "conflicts",
+        help="Inspect outstanding conflicts for a profile.",
+    )
+    conflicts_parser.add_argument(
+        "profile",
+        help="Profile to inspect for conflicts.",
+    )
+    conflicts_parser.set_defaults(func=_handle_conflicts)
+
+    return parser
+
+
+def _handle_run(args: argparse.Namespace) -> int:
+    runner = SyncRunner(config_dir=args.config_dir)
+    try:
+        runner.run(profile_name=args.profile, dry_run=args.dry_run)
+    except (
+        config.ConfigError,
+        snapshot.SnapshotError,
+        state_store.StateStoreError,
+        executor.ExecutionError,
+        RuntimeError,
+    ) as exc:
+        logger.error("%s", exc)
+        return 1
+    return 0
+
+
+def _handle_profiles(args: argparse.Namespace) -> int:
+    try:
+        summaries = _gather_profile_summaries(args.config_dir)
+    except config.ConfigError as exc:
+        logger.error("%s", exc)
+        return 1
+    if not summaries:
+        print("No profiles found.")
+        return 0
+    _print_profile_table(summaries, show_details=args.details)
+    return 0
+
+
+def _handle_init(args: argparse.Namespace) -> int:
+    wizard = InitWizard(config_dir=args.config_dir)
+    try:
+        profile_path = wizard.run(args.profile)
+    except config.ConfigError as exc:
+        logger.error("%s", exc)
+        return 1
+    logger.info("Profile created at %s.", profile_path)
+    return 0
+
+
+def _handle_daemon(args: argparse.Namespace) -> int:
+    if args.action == "start":
+        runner = DaemonRunner(config_dir=args.config_dir)
+        runner.run_forever(run_once=getattr(args, "once", False))
+        return 0
+    logger.error("Unsupported daemon action '%s'.", args.action)
+    return 1
+
+
+def _handle_status(args: argparse.Namespace) -> int:
+    target = args.profile or "all profiles"
+    logger.info("Would show latest sync status for %s.", target)
+    return 0
+
+
+def _handle_conflicts(args: argparse.Namespace) -> int:
+    if not args.profile:
+        logger.error("Profile name is required.")
+        return 1
+    config_dir = Path(args.config_dir).expanduser() if args.config_dir else None
+    base = config.ensure_config_structure(config_dir)
+    try:
+        state = state_store.load_state(args.profile, base)
+    except state_store.StateStoreError as exc:
+        logger.error("%s", exc)
+        return 1
+    if not state.conflicts:
+        print(f"No conflicts recorded for profile '{args.profile}'.")
+        return 0
+    for record in state.conflicts:
+        endpoints = " vs ".join(record.endpoints)
+        print(f"{record.path}: {record.reason} ({endpoints})")
+        if record.metadata:
+            print(f"  metadata: {record.metadata}")
+    return 0
+
+
+class SyncRunner:
+    """Coordinates snapshots, planner, executor, and state persistence."""
+
+    def __init__(self, *, config_dir: Optional[str] = None):
+        self._config_dir = Path(config_dir).expanduser() if config_dir else None
+        self._preconnect_done: bool = False
+
+    def run(self, *, profile_name: str, dry_run: bool) -> None:
+        base = config.ensure_config_structure(self._config_dir)
+        profile_cfg = config.load_profile(profile_name, base)
+        endpoint_a, endpoint_b = self._prepare_local_endpoints(profile_cfg)
+        ignore_patterns = profile_cfg.ignore.patterns
+
+        if profile_cfg.ssh and profile_cfg.ssh.pre_connect_command and not self._preconnect_done:
+            self._run_preconnect(profile_cfg.ssh)
+            self._preconnect_done = True
+
+        snap_a = snapshot.build_snapshot(endpoint_a.path, ignore_patterns=ignore_patterns)
+        snap_b = snapshot.build_snapshot(endpoint_b.path, ignore_patterns=ignore_patterns)
+        state = state_store.load_state(profile_cfg.profile.name, base)
+        plan_input = planner.PlannerInput(
+            profile=profile_cfg.profile.name,
+            snapshot_a=snap_a.entries,
+            snapshot_b=snap_b.entries,
+            endpoint_a=endpoint_a,
+            endpoint_b=endpoint_b,
+            state=state,
+            policy=profile_cfg.conflict.policy,
+            prefer_endpoint=profile_cfg.conflict.prefer,
+            manual_behavior=profile_cfg.conflict.manual_behavior,
+        )
+        plan_result = planner.plan(plan_input)
+        self._log_plan(plan_result)
+
+        blocking_conflicts = [c for c in plan_result.conflicts if c.reason != "manual_copy_both"]
+        if blocking_conflicts:
+            raise RuntimeError("Conflicts detected; resolve before rerunning.")
+        if plan_result.conflicts:
+            logger.warning("Conflicts recorded with manual policy; review generated *.conflict-* files.")
+
+        if dry_run:
+            logger.info("Dry-run complete; no filesystem changes applied.")
+            return
+
+        if plan_result.operations:
+            try:
+                executor.apply_operations(plan_result.operations, dry_run=False)
+            except executor.ExecutionError as exc:
+                if "Permission denied" in str(exc):
+                    raise RuntimeError("SSH authentication failed. Check your agent or credentials.") from exc
+                raise
+        else:
+            logger.info("No operations required; verifying state.")
+
+        saved_path = self._persist_state(
+            profile_cfg.profile.name,
+            endpoint_a,
+            endpoint_b,
+            ignore_patterns,
+            base,
+            plan_result.conflicts,
+        )
+        logger.info("Synchronization complete. State saved to %s.", saved_path)
+
+    def _prepare_local_endpoints(
+        self, profile_cfg: config.ProfileConfig
+    ) -> tuple[types.Endpoint, types.Endpoint]:
+        local_blocks = [block for block in profile_cfg.endpoints.values() if block.type == "local"]
+        if len(local_blocks) != 2:
+            raise config.ConfigError("Profile must define exactly two local endpoints for this run mode.")
+
+        endpoints: List[types.Endpoint] = []
+        for block in local_blocks:
+            if not block.path:
+                raise config.ConfigError(f"Endpoint '{block.name}' is missing a path.")
+            root = Path(block.path).expanduser()
+            if root.exists() and not root.is_dir():
+                raise config.ConfigError(f"Endpoint '{block.name}' path {root} is not a directory.")
+            root.mkdir(parents=True, exist_ok=True)
+            endpoints.append(types.Endpoint(id=block.name, type=types.EndpointType.LOCAL, path=root))
+        return endpoints[0], endpoints[1]
+
+    def _persist_state(
+        self,
+        profile_name: str,
+        endpoint_a: types.Endpoint,
+        endpoint_b: types.Endpoint,
+        ignore_patterns: List[str],
+        base_dir: Path,
+        conflicts: List[types.Conflict],
+    ) -> Path:
+        snap_a = snapshot.build_snapshot(endpoint_a.path, ignore_patterns=ignore_patterns)
+        snap_b = snapshot.build_snapshot(endpoint_b.path, ignore_patterns=ignore_patterns)
+        next_state = state_store.ProfileState(profile=profile_name)
+        for entry in snap_a.entries.values():
+            state_store.record_entry(next_state, endpoint_a.id, entry)
+        for entry in snap_b.entries.values():
+            state_store.record_entry(next_state, endpoint_b.id, entry)
+        for conflict in conflicts:
+            state_store.record_conflict(
+                next_state,
+                path=conflict.path,
+                reason=conflict.reason,
+                endpoints=(conflict.endpoints[0].id, conflict.endpoints[1].id),
+                metadata=conflict.metadata,
+            )
+        return state_store.save_state(next_state, base_dir)
+
+    def _run_preconnect(self, ssh_cfg: config.SshBlock) -> None:
+        command = ssh_cfg.pre_connect_command
+        if not command:
+            return
+        logger.info("Running SSH pre-connect command.")
+        env = {**os.environ, **ssh_cfg.env}
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError as exc:
+            raise RuntimeError(f"Failed to execute pre-connect command: {exc}") from exc
+        if result.returncode != 0:
+            raise RuntimeError(f"Pre-connect command failed: {result.stderr.strip() or result.stdout.strip()}")
+
+    @staticmethod
+    def _log_plan(plan_result: planner.PlannerOutput) -> None:
+        logger.info(
+            "Plan summary: %d operation(s), %d conflict(s).",
+            len(plan_result.operations),
+            len(plan_result.conflicts),
+        )
+        for op in plan_result.operations:
+            src = op.source.id if op.source else "-"
+            dst = op.destination.id if op.destination else "-"
+            logger.info(" - %s %s (%s -> %s)", op.type.value, op.path, src, dst)
+        for conflict in plan_result.conflicts:
+            logger.error(
+                " - Conflict at %s between %s and %s (%s)",
+                conflict.path,
+                conflict.endpoints[0].id,
+                conflict.endpoints[1].id,
+                conflict.reason,
+            )
+
+
+class InitWizard:
+    """Interactive profile creation."""
+
+    def __init__(self, *, config_dir: Optional[str] = None, input_func: Callable[[str], str] | None = None):
+        self._config_dir = Path(config_dir).expanduser() if config_dir else None
+        self._input = input_func or input
+
+    def run(self, provided_name: Optional[str]) -> Path:
+        base = config.ensure_config_structure(self._config_dir)
+        name = provided_name or self._prompt("Profile name", default="new-profile")
+        description = self._prompt("Description", default=f"{name} profile")
+        endpoints = [
+            self._prompt_endpoint(default_name="local", default_type="local"),
+            self._prompt_endpoint(default_name="remote", default_type="ssh"),
+        ]
+        use_default_ignore = self._confirm(
+            "Include default ignore patterns (.git, node_modules, __pycache__)?", default=True
+        )
+        ignore_block = config.IgnoreBlock(patterns=DEFAULT_IGNORE_PATTERNS if use_default_ignore else [])
+
+        ssh_block = config.SshBlock(ssh_command="ssh") if any(ep.type == "ssh" for ep in endpoints) else None
+        profile_cfg = config.ProfileConfig(
+            profile=config.ProfileBlock(name=name, description=description),
+            endpoints={ep.name: ep for ep in endpoints},
+            conflict=config.ConflictBlock(policy="newest"),
+            ignore=ignore_block,
+            schedule=config.ScheduleBlock(),
+            ssh=ssh_block,
+        )
+        toml_text = config.profile_to_toml(profile_cfg)
+        target = base / "profiles" / f"{name}.toml"
+        if target.exists():
+            if not self._confirm(f"Profile '{name}' already exists. Overwrite?", default=False):
+                raise config.ConfigError(f"Refused to overwrite existing profile '{name}'.")
+        target.write_text(toml_text)
+        return target
+
+    def _prompt_endpoint(self, *, default_name: str, default_type: str) -> config.EndpointBlock:
+        name = self._prompt(f"Endpoint name ({default_name})", default=default_name)
+        endpoint_type = self._prompt_type(name, default_type)
+        if endpoint_type == "local":
+            path = self._prompt(f"Local path for '{name}'")
+            return config.EndpointBlock(name=name, type="local", path=path)
+        host = self._prompt(f"SSH host for '{name}'")
+        path = self._prompt(f"Remote path for '{name}'")
+        return config.EndpointBlock(name=name, type="ssh", host=host, path=path)
+
+    def _prompt_type(self, name: str, default_type: str) -> str:
+        while True:
+            value = self._prompt(f"Endpoint '{name}' type [local/ssh]", default=default_type).lower()
+            if value in {"local", "ssh"}:
+                return value
+            logger.warning("Please enter 'local' or 'ssh'.")
+
+    def _prompt(self, message: str, *, default: Optional[str] = None) -> str:
+        prompt_text = f"{message}"
+        if default:
+            prompt_text += f" [{default}]"
+        prompt_text += ": "
+        while True:
+            response = self._input(prompt_text).strip()
+            if response:
+                return response
+            if default is not None:
+                return default
+            logger.warning("This field is required.")
+
+    def _confirm(self, message: str, *, default: bool) -> bool:
+        suffix = "Y/n" if default else "y/N"
+        prompt_text = f"{message} ({suffix}): "
+        while True:
+            response = self._input(prompt_text).strip().lower()
+            if not response:
+                return default
+            if response in {"y", "yes"}:
+                return True
+            if response in {"n", "no"}:
+                return False
+            logger.warning("Please answer yes or no.")
+
+
+@dataclass
+class ProfileSummary:
+    """Short summary of an on-disk profile."""
+
+    name: str
+    description: str
+    path: Path
+    last_sync: Optional[str] = None
+
+
+def _gather_profile_summaries(config_dir_arg: Optional[str]) -> List[ProfileSummary]:
+    base = config.ensure_config_structure(Path(config_dir_arg).expanduser() if config_dir_arg else None)
+    profiles_dir = base / "profiles"
+    summaries: List[ProfileSummary] = []
+    for path in sorted(profiles_dir.glob("*.toml")):
+        try:
+            profile = config.load_profile_from_path(path)
+        except config.ConfigError as exc:
+            logger.error("Skipping %s: %s", path.name, exc)
+            continue
+        summaries.append(
+            ProfileSummary(
+                name=profile.profile.name,
+                description=profile.profile.description,
+                path=path,
+                last_sync=None,
+            )
+        )
+    return summaries
+
+
+def _print_profile_table(summaries: List[ProfileSummary], *, show_details: bool) -> None:
+    headers = ["Name", "Description", "Last Sync"]
+    if show_details:
+        headers.append("File")
+    rows: List[List[str]] = []
+    for entry in summaries:
+        row = [entry.name, entry.description, entry.last_sync or "never"]
+        if show_details:
+            row.append(str(entry.path))
+        rows.append(row)
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for idx, cell in enumerate(row):
+            widths[idx] = max(widths[idx], len(cell))
+    header_line = "  ".join(header.ljust(widths[idx]) for idx, header in enumerate(headers))
+    print(header_line)
+    print("  ".join("-" * width for width in widths))
+    for row in rows:
+        print("  ".join(row[idx].ljust(widths[idx]) for idx in range(len(headers))))
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    """Entry point for console_scripts."""
+    parser = build_parser()
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    configure_logging(verbose=args.verbose, quiet=args.quiet)
+    handler: Handler = getattr(args, "func")
+    return handler(args)
+
+
+if __name__ == "__main__":  # pragma: no cover - manual execution guard
+    raise SystemExit(main())
