@@ -221,3 +221,24 @@ Goal: Make it easy to install and (eventually) run without a Python interpreter.
 	•	Note Windows caveats in README.
 
 ⸻
+
+Epic 9 - Final Cleanup
+
+Goal: Fill gaps in development for completing proejct.
+
+  - ✅ 9.1 Remote sync features aren’t wired up: the runner insists on two local endpoints (simple_sync/cli.py:265) and
+    the snapshot builder only walks local files (simple_sync/engine/snapshot.py:24), so the SSH listing/copy helpers
+    never run. Epic 5/6 items (SSH snapshots, remote↔remote, PIV/agent handling) are effectively missing.
+  - ✅ 9.2 Init wizard defaults to a local+ssh profile (simple_sync/cli.py:357-370) but the runner rejects any non-local
+    endpoints (simple_sync/cli.py:265-270), so simple-sync init produces unusable configs for remote profiles.
+  - ✅ 9.3 status and profiles commands don’t show real state: status is a placeholder log (simple_sync/cli.py:173-176)
+    and profiles always print “never” because last_sync isn’t read from stored state (simple_sync/cli.py:441-459), leaving
+    TODO 2.5 unfinished.
+  - ✅ 9.4 CLI help drift: run --dry-run help still says “(placeholder)” even though it performs a true dry-run
+    (simple_sync/cli.py:54-58), violating the “CLI help remains accurate” DoD.
+  - ✅ 9.5 Conflict logging/resolution metadata is incomplete: conflicts have no timestamp/resolution info
+    (simple_sync/engine/state_store.py:30-60), blocking conflicts are dropped before persistence (simple_sync/cli.py:
+    235-238), and manual copy-both files omit the requested timestamped suffix (simple_sync/engine/planner.py:242-270).
+  - ✅ 9.6 Daemon scheduling ignores schedule.run_on_start and only exposes --once; there’s no way to delay the initial
+    run or request the foreground-debug mode mentioned in TODO 7.3 (simple_sync/daemon/runner.py:67-77, simple_sync/
+    cli.py:84-99).

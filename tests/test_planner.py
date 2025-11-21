@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import unittest
 
+from unittest import mock
+
 from simple_sync.engine import planner, state_store
 from simple_sync import types
 
@@ -98,23 +100,25 @@ class TestPlanner(unittest.TestCase):
         state = state_store.ProfileState(profile="demo")
         state_store.record_entry(state, self.endpoint_a.id, make_entry("file.txt", size=1, mtime=1))
         state_store.record_entry(state, self.endpoint_b.id, make_entry("file.txt", size=1, mtime=1))
-        result = planner.plan(
-            planner.PlannerInput(
-                profile="demo",
-                snapshot_a=snap_a,
-                snapshot_b=snap_b,
-                endpoint_a=self.endpoint_a,
-                endpoint_b=self.endpoint_b,
-                state=state,
-                policy="manual",
-                manual_behavior="copy_both",
+        with mock.patch("simple_sync.engine.planner.time.time", return_value=1700000000):
+            result = planner.plan(
+                planner.PlannerInput(
+                    profile="demo",
+                    snapshot_a=snap_a,
+                    snapshot_b=snap_b,
+                    endpoint_a=self.endpoint_a,
+                    endpoint_b=self.endpoint_b,
+                    state=state,
+                    policy="manual",
+                    manual_behavior="copy_both",
+                )
             )
-        )
         self.assertEqual(len(result.conflicts), 1)
         self.assertEqual(len(result.operations), 2)
         suffixes = {op.metadata["target_suffix"] for op in result.operations}
-        self.assertIn("file.txt.conflict-A", suffixes)
-        self.assertIn("file.txt.conflict-B", suffixes)
+        self.assertIn("file.txt.conflict-A-1700000000", suffixes)
+        self.assertIn("file.txt.conflict-B-1700000000", suffixes)
+        self.assertEqual(result.conflicts[0].metadata.get("timestamp"), 1700000000)
 
     def test_delete_detected_when_missing_from_snapshots(self):
         state = state_store.ProfileState(profile="demo")

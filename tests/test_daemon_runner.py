@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import signal
 import tempfile
 import unittest
@@ -12,7 +13,7 @@ from simple_sync import config
 from simple_sync.daemon.runner import DaemonRunner
 
 
-def _write_profile(base: Path, name: str, enabled: bool) -> None:
+def _write_profile(base: Path, name: str, enabled: bool, *, run_on_start: bool = True) -> None:
     profile = config.ProfileConfig(
         profile=config.ProfileBlock(name=name, description="test"),
         endpoints={
@@ -21,7 +22,7 @@ def _write_profile(base: Path, name: str, enabled: bool) -> None:
         },
         conflict=config.ConflictBlock(policy="newest"),
         ignore=config.IgnoreBlock(),
-        schedule=config.ScheduleBlock(enabled=enabled, interval_seconds=1, run_on_start=True),
+        schedule=config.ScheduleBlock(enabled=enabled, interval_seconds=1, run_on_start=run_on_start),
         ssh=config.SshBlock(),
     )
     config.ensure_config_structure(base)
@@ -60,6 +61,23 @@ class TestDaemonRunner(unittest.TestCase):
             self.assertTrue(runner._reload)
             runner._handle_signal(signal.SIGTERM, None)
             self.assertTrue(runner._stop)
+
+    def test_respects_run_on_start_flag(self):
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch("simple_sync.daemon.runner.time.time", return_value=100):
+            base = Path(tmpdir)
+            _write_profile(base, "delayed", True, run_on_start=False)
+            runner = DaemonRunner(config_dir=tmpdir)
+            profiles = runner._load_scheduled_profiles()
+        self.assertEqual(profiles["delayed"].next_run, 101)
+
+    def test_foreground_skips_file_logger(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runner = DaemonRunner(config_dir=tmpdir)
+            runner._foreground = True
+            log_path = Path(tmpdir) / "logs" / "demo.log"
+            with runner._profile_logger("demo"):
+                logging.getLogger(__name__).info("testing foreground")
+            self.assertFalse(log_path.exists())
 
 
 if __name__ == "__main__":

@@ -28,8 +28,10 @@ class DaemonRunner:
         self._base_dir = config.ensure_config_structure(self._config_dir)
         self._stop = False
         self._reload = False
+        self._foreground = False
 
-    def run_forever(self, *, run_once: bool = False) -> None:
+    def run_forever(self, *, run_once: bool = False, foreground: bool = False) -> None:
+        self._foreground = foreground
         signal.signal(signal.SIGINT, self._handle_signal)
         signal.signal(signal.SIGTERM, self._handle_signal)
         signal.signal(signal.SIGHUP, self._handle_signal)
@@ -70,10 +72,12 @@ class DaemonRunner:
         for profile_cfg in summaries:
             if not profile_cfg.schedule.enabled:
                 continue
+            start_time = time.time()
+            first_run = start_time if profile_cfg.schedule.run_on_start else start_time + profile_cfg.schedule.interval_seconds
             scheduled[profile_cfg.profile.name] = ScheduledProfile(
                 name=profile_cfg.profile.name,
                 interval=profile_cfg.schedule.interval_seconds,
-                next_run=time.time(),
+                next_run=first_run,
             )
         return scheduled
 
@@ -87,6 +91,9 @@ class DaemonRunner:
 
     @contextmanager
     def _profile_logger(self, profile_name: str):
+        if self._foreground:
+            yield
+            return
         log_dir = self._base_dir / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         file_path = log_dir / f"{profile_name}.log"

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from simple_sync import config, types
 
-STATE_VERSION = 2
+STATE_VERSION = 3
 
 
 class StateStoreError(RuntimeError):
@@ -32,6 +33,8 @@ class ConflictRecord:
     path: str
     reason: str
     endpoints: tuple[str, str]
+    timestamp: float
+    resolution: Optional[str] = None
     metadata: Dict[str, object] = field(default_factory=dict)
 
 
@@ -54,6 +57,8 @@ class ProfileState:
                     "path": conflict.path,
                     "reason": conflict.reason,
                     "endpoints": list(conflict.endpoints),
+                    "timestamp": conflict.timestamp,
+                    "resolution": conflict.resolution,
                     "metadata": conflict.metadata,
                 }
                 for conflict in self.conflicts
@@ -63,7 +68,7 @@ class ProfileState:
     @classmethod
     def from_dict(cls, payload: Dict[str, object]) -> "ProfileState":
         version = payload.get("version", 1)
-        if version not in {1, STATE_VERSION}:
+        if version not in {1, 2, STATE_VERSION}:
             raise StateStoreError("Unsupported state file version.")
         profile = payload.get("profile")
         if not isinstance(profile, str):
@@ -100,6 +105,8 @@ class ProfileState:
                             path=str(record.get("path", "")),
                             reason=str(record.get("reason", "")),
                             endpoints=(str(endpoints_list[0]), str(endpoints_list[1])),
+                            timestamp=float(record.get("timestamp", time.time())),
+                            resolution=record.get("resolution"),
                             metadata=record.get("metadata", {}) or {},
                         )
                     )
@@ -152,6 +159,8 @@ def record_conflict(
     path: str,
     reason: str,
     endpoints: tuple[str, str],
+    resolution: str | None = None,
+    timestamp: float | None = None,
     metadata: Dict[str, object] | None = None,
 ) -> None:
     state.conflicts.append(
@@ -159,6 +168,8 @@ def record_conflict(
             path=path,
             reason=reason,
             endpoints=endpoints,
+            timestamp=timestamp or time.time(),
+            resolution=resolution,
             metadata=metadata or {},
         )
     )
