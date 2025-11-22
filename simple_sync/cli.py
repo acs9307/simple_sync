@@ -261,6 +261,8 @@ class SyncRunner:
             policy=profile_cfg.conflict.policy,
             prefer_endpoint=profile_cfg.conflict.prefer,
             manual_behavior=profile_cfg.conflict.manual_behavior,
+            merge_text_files=profile_cfg.conflict.merge_text_files,
+            merge_fallback=profile_cfg.conflict.merge_fallback,
         )
         plan_result = planner.plan(plan_input)
         self._log_plan(plan_result)
@@ -286,7 +288,7 @@ class SyncRunner:
 
         if plan_result.operations:
             try:
-                executor.apply_operations(plan_result.operations, dry_run=False)
+                executor.apply_operations(plan_result.operations, dry_run=False, state=state)
             except executor.ExecutionError as exc:
                 if "Permission denied" in str(exc):
                     raise RuntimeError("SSH authentication failed. Check your agent or credentials.") from exc

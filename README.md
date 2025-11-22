@@ -74,6 +74,32 @@ simple-sync run my-sync
 
 The profile will be saved for future use, but you can run it once and ignore it afterward. The tool handles bidirectional sync automatically using the "newest" policy by default.
 
+### Text File Merging
+
+When both directories have modified the same file between syncs, `simple-sync` can attempt to automatically merge text files (similar to git merge). This feature is enabled by default and works for common text file formats (.py, .js, .md, etc.).
+
+The merge settings are configured in the `[conflict]` section:
+
+```toml
+[conflict]
+policy = "newest"
+merge_text_files = true       # Enable automatic merging for text files (default: true)
+merge_fallback = "newest"     # Fallback policy if merge fails (newest, manual, or prefer)
+```
+
+**How it works:**
+
+1. When both endpoints have modified a text file, `simple-sync` attempts to merge the changes automatically
+2. If the merge succeeds (no overlapping changes), the merged content is written to both endpoints
+3. If the merge fails (conflicting changes), it falls back to the configured `merge_fallback` policy
+4. Binary files and non-text formats always use the configured conflict policy (no merge attempt)
+
+**Supported fallback policies:**
+
+- `newest` - Use the most recently modified version
+- `manual` - Require manual resolution (creates conflict files)
+- `prefer` - Use the preferred endpoint (requires `prefer` field to be set)
+
 ## Daemon usage
 
 `simple_sync` ships with a lightweight daemon runner for scheduled profiles. To run it in the foreground for debugging:

@@ -68,6 +68,8 @@ class ConflictBlock:
     policy: str
     prefer: Optional[str] = None
     manual_behavior: Optional[str] = None
+    merge_text_files: bool = True
+    merge_fallback: str = "newest"
 
 
 @dataclass
@@ -153,6 +155,8 @@ def profile_to_toml(profile: ProfileConfig) -> str:
                 if profile.conflict.manual_behavior
                 else {}
             ),
+            "merge_text_files": profile.conflict.merge_text_files,
+            "merge_fallback": profile.conflict.merge_fallback,
         },
     )
     add_section("[ignore]", {"patterns": profile.ignore.patterns})
@@ -307,13 +311,25 @@ def _load_conflict(block: Mapping[str, Any], profile_path: Path) -> ConflictBloc
     policy = _require_str(block, "policy", "[conflict]", profile_path)
     prefer = block.get("prefer")
     manual_behavior = block.get("manual_behavior")
+    merge_text_files = block.get("merge_text_files", True)
+    merge_fallback = block.get("merge_fallback", "newest")
+
     if policy not in {"newest", "prefer", "manual"}:
         raise ConfigError(f"Conflict policy '{policy}' is not supported in {profile_path}.")
     if policy == "prefer" and not prefer:
         raise ConfigError(f"'prefer' policy requires 'prefer' field in {profile_path}.")
     if policy == "manual" and not manual_behavior:
         raise ConfigError(f"'manual' policy requires 'manual_behavior' field in {profile_path}.")
-    return ConflictBlock(policy=policy, prefer=prefer, manual_behavior=manual_behavior)
+    if merge_fallback not in {"newest", "manual", "prefer"}:
+        raise ConfigError(f"merge_fallback '{merge_fallback}' is not supported in {profile_path}.")
+
+    return ConflictBlock(
+        policy=policy,
+        prefer=prefer,
+        manual_behavior=manual_behavior,
+        merge_text_files=bool(merge_text_files),
+        merge_fallback=merge_fallback,
+    )
 
 
 def _load_ignore(block: Any) -> IgnoreBlock:

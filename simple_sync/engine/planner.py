@@ -21,6 +21,8 @@ class PlannerInput:
     policy: str = "newest"
     prefer_endpoint: str | None = None
     manual_behavior: str | None = None
+    merge_text_files: bool = True
+    merge_fallback: str = "newest"
 
 
 @dataclass
@@ -53,6 +55,8 @@ def plan(input_data: PlannerInput) -> PlannerOutput:
             input_data.policy,
             input_data.prefer_endpoint,
             input_data.manual_behavior,
+            input_data.merge_text_files,
+            input_data.merge_fallback,
         )
     return out
 
@@ -69,6 +73,8 @@ def _classify_path(
     policy: str,
     prefer_endpoint: str | None,
     manual_behavior: str | None,
+    merge_text_files: bool = True,
+    merge_fallback: str = "newest",
 ) -> None:
     if entry_a and not entry_b:
         if _changed_since_last(entry_a, last_a) or last_b is None:
@@ -116,7 +122,35 @@ def _classify_path(
         changed_a = _changed_since_last(entry_a, last_a)
         changed_b = _changed_since_last(entry_b, last_b)
         if changed_a and changed_b:
-            if policy == "newest":
+            # Check if we should attempt a merge for text files
+            from simple_sync.engine import merge
+
+            should_merge = (
+                merge_text_files
+                and not entry_a.is_dir
+                and not entry_b.is_dir
+                and merge.is_text_file(path)
+                and last_a is not None
+                and last_b is not None
+            )
+
+            if should_merge:
+                # Attempt three-way merge
+                out.operations.append(
+                    types.Operation(
+                        type=types.OperationType.MERGE,
+                        path=path,
+                        source=endpoint_a,
+                        destination=endpoint_b,
+                        metadata={
+                            "reason": "merge_attempt",
+                            "fallback_policy": merge_fallback,
+                            "fallback_prefer": prefer_endpoint,
+                            "fallback_manual_behavior": manual_behavior,
+                        },
+                    )
+                )
+            elif policy == "newest":
                 winner, loser = _choose_newest(entry_a, entry_b, endpoint_a, endpoint_b)
                 out.operations.append(
                     types.Operation(

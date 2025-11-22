@@ -9,6 +9,8 @@ topology = "pair"
 policy = "newest"
 prefer = "local"
 manual_behavior = "copy_both"
+merge_text_files = true
+merge_fallback = "newest"
 
 [ignore]
 patterns = [".git", "node_modules", "__pycache__"]
