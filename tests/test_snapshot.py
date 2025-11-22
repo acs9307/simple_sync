@@ -7,7 +7,9 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from simple_sync import types
 from simple_sync.engine import snapshot
 
 
@@ -39,6 +41,30 @@ class TestSnapshotBuilder(unittest.TestCase):
     def test_missing_root_errors(self):
         with self.assertRaises(snapshot.SnapshotError):
             snapshot.build_snapshot("/path/that/does/not/exist")
+
+
+class TestRemoteSnapshot(unittest.TestCase):
+    def test_remote_snapshot_uses_listing_and_respects_ignore(self):
+        endpoint = types.Endpoint(
+            id="remote",
+            type=types.EndpointType.SSH,
+            path="/srv/data",
+            host="example.com",
+            ssh_command="ssh",
+        )
+        mock_entries = {
+            ".": types.FileEntry(path=".", is_dir=True, size=0, mtime=0),
+            "keep.txt": types.FileEntry(path="keep.txt", is_dir=False, size=5, mtime=10),
+            "ignored.tmp": types.FileEntry(path="ignored.tmp", is_dir=False, size=1, mtime=10),
+        }
+        with mock.patch("simple_sync.engine.snapshot.listing.list_remote_entries", return_value=mock_entries) as mock_list:
+            result = snapshot.build_snapshot_for_endpoint(
+                endpoint, ignore_patterns=["*.tmp"], ssh_command="ssh"
+            )
+        self.assertIn("keep.txt", result.entries)
+        self.assertNotIn("ignored.tmp", result.entries)
+        self.assertNotIn(".", result.entries)
+        mock_list.assert_called_once()
 
 
 if __name__ == "__main__":

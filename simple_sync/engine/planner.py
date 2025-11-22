@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Tuple
 
@@ -138,15 +139,16 @@ def _classify_path(
                     )
                 )
             elif policy == "manual" and manual_behavior == "copy_both":
+                timestamp = int(time.time())
                 out.operations.extend(
-                    _copy_both_operations(path, endpoint_a, endpoint_b, entry_a, entry_b)
+                    _copy_both_operations(path, endpoint_a, endpoint_b, entry_a, entry_b, timestamp=timestamp)
                 )
                 out.conflicts.append(
                     types.Conflict(
                         path=path,
                         endpoints=(endpoint_a, endpoint_b),
                         reason="manual_copy_both",
-                        metadata={"resolution": "copy_both"},
+                        metadata={"resolution": "copy_both", "timestamp": timestamp},
                     )
                 )
             else:
@@ -245,10 +247,13 @@ def _copy_both_operations(
     endpoint_b: types.Endpoint,
     entry_a: types.FileEntry,
     entry_b: types.FileEntry,
+    *,
+    timestamp: int | None = None,
 ) -> List[types.Operation]:
     operations: List[types.Operation] = []
-    suffix_a = f"{path}.conflict-{endpoint_a.id}"
-    suffix_b = f"{path}.conflict-{endpoint_b.id}"
+    timestamp = timestamp or int(time.time())
+    suffix_a = f"{path}.conflict-{endpoint_a.id}-{timestamp}"
+    suffix_b = f"{path}.conflict-{endpoint_b.id}-{timestamp}"
     operations.append(
         types.Operation(
             type=types.OperationType.COPY,

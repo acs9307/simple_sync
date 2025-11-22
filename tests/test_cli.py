@@ -11,8 +11,8 @@ from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from simple_sync import cli, config
-from simple_sync.engine import executor
+from simple_sync import cli, config, types
+from simple_sync.engine import executor, state_store
 
 
 def _run_cli(argv: list[str]) -> tuple[int, str, str]:
@@ -89,15 +89,29 @@ class TestCliCommands(unittest.TestCase):
         mock_run.assert_called_once()
 
     def test_status_command(self):
-        exit_code, stdout, stderr = _run_cli(["status"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = config.ensure_config_structure(Path(tmpdir))
+            profile_cfg = config.build_profile_template()
+            profile_cfg.profile.name = "demo"
+            profile_cfg.profile.description = "Demo profile"
+            (base / "profiles" / "demo.toml").write_text(config.profile_to_toml(profile_cfg))
+            state_store.save_state(state_store.ProfileState(profile="demo"), base)
+            exit_code, stdout, stderr = _run_cli(["--config-dir", tmpdir, "status"])
         self.assertEqual(exit_code, 0)
-        self.assertEqual(stdout, "")
-        self.assertIn("status", stderr.lower())
+        self.assertIn("demo", stdout)
+        self.assertIn("Conflicts", stdout)
 
     def test_quiet_flag_suppresses_info_logs(self):
-        exit_code, stdout, stderr = _run_cli(["--quiet", "status"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = config.ensure_config_structure(Path(tmpdir))
+            profile_cfg = config.build_profile_template()
+            profile_cfg.profile.name = "demo"
+            profile_cfg.profile.description = "Demo profile"
+            (base / "profiles" / "demo.toml").write_text(config.profile_to_toml(profile_cfg))
+            state_store.save_state(state_store.ProfileState(profile="demo"), base)
+            exit_code, stdout, stderr = _run_cli(["--config-dir", tmpdir, "--quiet", "status"])
         self.assertEqual(exit_code, 0)
-        self.assertEqual(stdout, "")
+        self.assertNotEqual(stdout, "")
         self.assertEqual("", stderr)
 
 
@@ -114,7 +128,11 @@ class TestCliProfilesCommand(unittest.TestCase):
             exit_code, stdout, stderr = _run_cli(["--config-dir", tmpdir, "profiles"])
             self.assertEqual(exit_code, 0)
             self.assertIn("demo", stdout)
+            self.assertIn("never", stdout)
             self.assertEqual("", stderr.strip())
+            state_store.save_state(state_store.ProfileState(profile="demo"), base)
+            exit_code, stdout, stderr = _run_cli(["--config-dir", tmpdir, "profiles"])
+            self.assertNotIn("never", stdout)
             exit_code, stdout, stderr = _run_cli(["--config-dir", tmpdir, "conflicts", "demo"])
             self.assertEqual(exit_code, 0)
             self.assertIn("No conflicts", stdout)
@@ -245,6 +263,51 @@ class TestCliRunCommand(unittest.TestCase):
                 exit_code, stdout, stderr = _run_cli(["--config-dir", config_tmp, "run", "demo"])
             self.assertNotEqual(exit_code, 0)
             self.assertIn("authentication prompt", stderr.lower())
+
+    def test_run_supports_remote_endpoint(self):
+        with tempfile.TemporaryDirectory() as config_tmp, tempfile.TemporaryDirectory() as src_tmp:
+            config_dir = Path(config_tmp)
+            src_root = Path(src_tmp)
+            (src_root / "hello.txt").write_text("hello")
+
+            profile_cfg = config.ProfileConfig(
+                profile=config.ProfileBlock(name="remote", description="Remote profile"),
+                endpoints={
+                    "local": config.EndpointBlock(name="local", type="local", path=str(src_root)),
+                    "remote": config.EndpointBlock(name="remote", type="ssh", host="example.com", path="/srv/remote"),
+                },
+                conflict=config.ConflictBlock(policy="newest"),
+                ignore=config.IgnoreBlock(patterns=[]),
+                schedule=config.ScheduleBlock(),
+                ssh=config.SshBlock(ssh_command="ssh"),
+            )
+            base = config.ensure_config_structure(config_dir)
+            (base / "profiles" / "remote.toml").write_text(config.profile_to_toml(profile_cfg))
+
+            operations: list[types.Operation] = []
+            remote_entries: dict[str, types.FileEntry] = {}
+
+            def fake_listing(host, root, **_kwargs):
+                self.assertEqual(host, "example.com")
+                return remote_entries.copy()
+
+            def fake_apply_operations(ops, dry_run: bool = False):
+                operations.extend(ops)
+                for op in ops:
+                    if op.type == types.OperationType.COPY and op.destination.type == types.EndpointType.SSH:
+                        source_file = Path(op.source.path) / op.path
+                        remote_entries[op.path] = types.FileEntry(
+                            path=op.path, is_dir=False, size=source_file.stat().st_size, mtime=source_file.stat().st_mtime
+                        )
+
+            with mock.patch("simple_sync.engine.snapshot.listing.list_remote_entries", side_effect=fake_listing), mock.patch(
+                "simple_sync.engine.executor.apply_operations", side_effect=fake_apply_operations
+            ):
+                exit_code, stdout, stderr = _run_cli(["--config-dir", config_tmp, "run", "remote"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(any(op.destination.type == types.EndpointType.SSH for op in operations))
+            self.assertTrue((config_dir / "state" / "remote.json").exists())
 
 
 if __name__ == "__main__":

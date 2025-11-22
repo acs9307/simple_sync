@@ -46,7 +46,9 @@ class TestStateStore(unittest.TestCase):
                 path="file.txt",
                 reason="manual_copy_both",
                 endpoints=("A", "B"),
-                metadata={"resolution": "copy_both"},
+                resolution="copy_both",
+                timestamp=1234.0,
+                metadata={"note": "manual resolution"},
             )
             state_store.save_state(state, Path(tmpdir))
             loaded = state_store.load_state("demo", Path(tmpdir))
@@ -54,6 +56,9 @@ class TestStateStore(unittest.TestCase):
         conflict = loaded.conflicts[0]
         self.assertEqual(conflict.path, "file.txt")
         self.assertEqual(conflict.reason, "manual_copy_both")
+        self.assertEqual(conflict.resolution, "copy_both")
+        self.assertEqual(conflict.timestamp, 1234.0)
+        self.assertEqual(conflict.metadata.get("note"), "manual resolution")
 
 
 if __name__ == "__main__":

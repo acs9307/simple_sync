@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, Iterable, Sequence
 
 from simple_sync import types
+from simple_sync.ssh import listing
 
 
 class SnapshotError(RuntimeError):
@@ -78,4 +79,31 @@ def _make_entry(path: Path, rel_path: str, *, is_dir: bool) -> types.FileEntry:
     )
 
 
-__all__ = ["SnapshotError", "SnapshotResult", "build_snapshot"]
+def build_snapshot_for_endpoint(
+    endpoint: types.Endpoint,
+    *,
+    ignore_patterns: Sequence[str] | None = None,
+    ssh_command: Sequence[str] | str | None = None,
+) -> SnapshotResult:
+    """Build a snapshot for either a local or SSH endpoint."""
+    if endpoint.type == types.EndpointType.LOCAL:
+        return build_snapshot(endpoint.path, ignore_patterns=ignore_patterns)
+    if endpoint.type == types.EndpointType.SSH:
+        if not endpoint.host:
+            raise SnapshotError(f"Endpoint '{endpoint.id}' is missing host information.")
+        resolved_ignore = tuple(ignore_patterns or [])
+        entries = listing.list_remote_entries(
+            host=endpoint.host,
+            root=str(endpoint.path),
+            ssh_command=ssh_command or endpoint.ssh_command or "ssh",
+        )
+        filtered: Dict[str, types.FileEntry] = {}
+        for rel_path, entry in entries.items():
+            if rel_path == "." or _is_ignored(rel_path, resolved_ignore):
+                continue
+            filtered[rel_path] = entry
+        return SnapshotResult(root=Path(endpoint.path), entries=filtered)
+    raise SnapshotError(f"Unsupported endpoint type: {endpoint.type}")
+
+
+__all__ = ["SnapshotError", "SnapshotResult", "build_snapshot", "build_snapshot_for_endpoint"]
