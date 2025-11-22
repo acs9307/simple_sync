@@ -9,6 +9,71 @@
 
 This repository is under active construction. Track the `TODO.txt` file for the current roadmap.
 
+## Getting Started
+
+The fastest way to sync two directories is using the interactive `init` command:
+
+```bash
+simple-sync init my-sync
+```
+
+This will prompt you for:
+- Profile name (defaults to "my-sync")
+- Description
+- First endpoint (local path)
+- Second endpoint (can be local or SSH)
+- Whether to include default ignore patterns (.git, node_modules, __pycache__)
+
+Then run the sync:
+
+```bash
+simple-sync run my-sync
+```
+
+### Manual Profile Creation
+
+Alternatively, create a profile file manually at `~/.config/simple_sync/profiles/my-sync.toml`:
+
+```toml
+[profile]
+name = "my-sync"
+description = "One-off sync between two directories"
+
+[conflict]
+policy = "newest"  # Use newest file when conflicts occur
+
+[ignore]
+patterns = [".git", "node_modules", "__pycache__"]
+
+[endpoints.source]
+type = "local"
+path = "/path/to/source"
+
+[endpoints.destination]
+type = "local"
+path = "/path/to/destination"
+```
+
+Then run:
+
+```bash
+simple-sync run my-sync
+```
+
+### Useful Options
+
+- `--dry-run` - See what would happen without making changes:
+  ```bash
+  simple-sync run my-sync --dry-run
+  ```
+
+- `--verbose` - Get more detailed output:
+  ```bash
+  simple-sync -v run my-sync
+  ```
+
+The profile will be saved for future use, but you can run it once and ignore it afterward. The tool handles bidirectional sync automatically using the "newest" policy by default.
+
 ## Daemon usage
 
 `simple_sync` ships with a lightweight daemon runner for scheduled profiles. To run it in the foreground for debugging:
