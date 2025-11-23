@@ -17,7 +17,9 @@ classifiers = [
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
 ]
-dependencies = []
+dependencies = [
+  "argcomplete>=3.0.0",
+]
 
 [project.optional-dependencies]
 binary = ["pyinstaller>=6.0,<7.0"]

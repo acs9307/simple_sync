@@ -11,10 +11,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence
 
+try:
+    import argcomplete
+    ARGCOMPLETE_AVAILABLE = True
+except ImportError:
+    ARGCOMPLETE_AVAILABLE = False
+
 from . import __version__, config, types
 from .daemon import DaemonRunner
 from .engine import executor, planner, snapshot, state_store
 from .logging import configure_logging
+
+# Import completers if argcomplete is available
+if ARGCOMPLETE_AVAILABLE:
+    from . import completion
 
 Handler = Callable[[argparse.Namespace], int]
 logger = logging.getLogger(__name__)
@@ -52,7 +62,9 @@ def build_parser() -> argparse.ArgumentParser:
         "run",
         help="Execute a synchronization run for a profile.",
     )
-    run_parser.add_argument("profile", help="Name of the profile to synchronize.")
+    profile_arg = run_parser.add_argument("profile", help="Name of the profile to synchronize.")
+    if ARGCOMPLETE_AVAILABLE:
+        profile_arg.completer = completion.profile_completer
     run_parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -107,22 +119,42 @@ def build_parser() -> argparse.ArgumentParser:
         "status",
         help="Show the latest sync status for a profile.",
     )
-    status_parser.add_argument(
+    status_profile_arg = status_parser.add_argument(
         "profile",
         nargs="?",
         help="Profile to inspect; defaults to all.",
     )
+    if ARGCOMPLETE_AVAILABLE:
+        status_profile_arg.completer = completion.profile_completer
     status_parser.set_defaults(func=_handle_status)
 
     conflicts_parser = subparsers.add_parser(
         "conflicts",
         help="Inspect outstanding conflicts for a profile.",
     )
-    conflicts_parser.add_argument(
+    conflicts_profile_arg = conflicts_parser.add_argument(
         "profile",
         help="Profile to inspect for conflicts.",
     )
+    if ARGCOMPLETE_AVAILABLE:
+        conflicts_profile_arg.completer = completion.profile_completer
     conflicts_parser.set_defaults(func=_handle_conflicts)
+
+    completion_parser = subparsers.add_parser(
+        "completion",
+        help="Install or show tab completion setup instructions.",
+    )
+    completion_parser.add_argument(
+        "--install",
+        action="store_true",
+        help="Install completion for the current shell (bash/zsh/fish).",
+    )
+    completion_parser.add_argument(
+        "--shell",
+        choices=["bash", "zsh", "fish", "tcsh"],
+        help="Target shell for completion (auto-detected if not specified).",
+    )
+    completion_parser.set_defaults(func=_handle_completion)
 
     return parser
 
@@ -218,6 +250,141 @@ def _handle_conflicts(args: argparse.Namespace) -> int:
         if record.metadata:
             print(f"  metadata: {record.metadata}")
     return 0
+
+
+def _handle_completion(args: argparse.Namespace) -> int:
+    """Handle the completion command for installing shell completion."""
+    if not ARGCOMPLETE_AVAILABLE:
+        print("Tab completion requires the 'argcomplete' package.")
+        print("Install it with: pip install argcomplete")
+        return 1
+
+    import shutil
+
+    # Detect shell if not specified
+    shell = args.shell
+    if not shell:
+        shell_env = os.environ.get("SHELL", "")
+        if "bash" in shell_env:
+            shell = "bash"
+        elif "zsh" in shell_env:
+            shell = "zsh"
+        elif "fish" in shell_env:
+            shell = "fish"
+        elif "tcsh" in shell_env:
+            shell = "tcsh"
+        else:
+            print("Could not auto-detect shell. Please specify with --shell")
+            return 1
+
+    if args.install:
+        # Attempt to install completion
+        try:
+            if shell == "bash":
+                completion_script = "eval \"$(register-python-argcomplete simple-sync)\""
+                bashrc = Path.home() / ".bashrc"
+
+                # Check if already installed
+                if bashrc.exists() and completion_script in bashrc.read_text():
+                    print("Completion already installed in ~/.bashrc")
+                else:
+                    with bashrc.open("a") as f:
+                        f.write(f"\n# simple-sync completion\n{completion_script}\n")
+                    print("Completion installed in ~/.bashrc")
+                    print("Run 'source ~/.bashrc' or restart your shell to activate.")
+
+            elif shell == "zsh":
+                completion_script = "\n".join(
+                    [
+                        "autoload -U bashcompinit",
+                        "bashcompinit",
+                        "eval \"$(register-python-argcomplete --shell zsh simple-sync)\"",
+                    ]
+                )
+                zshrc = Path.home() / ".zshrc"
+
+                if zshrc.exists() and completion_script in zshrc.read_text():
+                    print("Completion already installed in ~/.zshrc")
+                else:
+                    with zshrc.open("a") as f:
+                        f.write(f"\n# simple-sync completion\n{completion_script}\n")
+                    print("Completion installed in ~/.zshrc")
+                    print("Run 'source ~/.zshrc' or restart your shell to activate.")
+
+            elif shell == "fish":
+                fish_dir = Path.home() / ".config" / "fish" / "completions"
+                fish_dir.mkdir(parents=True, exist_ok=True)
+                fish_file = fish_dir / "simple-sync.fish"
+
+                result = subprocess.run(
+                    ["register-python-argcomplete", "--shell", "fish", "simple-sync"],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode == 0:
+                    fish_file.write_text(result.stdout)
+                    print(f"Completion installed in {fish_file}")
+                    print("Restart your shell to activate.")
+                else:
+                    print("Failed to generate fish completion script")
+                    return 1
+
+            elif shell == "tcsh":
+                print("tcsh completion requires manual setup.")
+                print("Add the following to your ~/.tcshrc:")
+                print("  eval `register-python-argcomplete --shell tcsh simple-sync`")
+
+        except Exception as exc:
+            logger.error("Failed to install completion: %s", exc)
+            return 1
+
+        return 0
+
+    else:
+        # Show instructions
+        print(f"To enable tab completion for {shell}:")
+        print()
+
+        if shell == "bash":
+            print("1. Ensure argcomplete is installed:")
+            print("   pip install argcomplete")
+            print()
+            print("2. Add to ~/.bashrc:")
+            print("   eval \"$(register-python-argcomplete simple-sync)\"")
+            print()
+            print("3. Reload your shell:")
+            print("   source ~/.bashrc")
+
+        elif shell == "zsh":
+            print("1. Ensure argcomplete is installed:")
+            print("   pip install argcomplete")
+            print()
+            print("2. Add to ~/.zshrc:")
+            print("   autoload -U bashcompinit")
+            print("   bashcompinit")
+            print("   eval \"$(register-python-argcomplete --shell zsh simple-sync)\"")
+            print()
+            print("3. Reload your shell:")
+            print("   source ~/.zshrc")
+
+        elif shell == "fish":
+            print("1. Ensure argcomplete is installed:")
+            print("   pip install argcomplete")
+            print()
+            print("2. Generate and save completion script:")
+            print("   register-python-argcomplete --shell fish simple-sync > ~/.config/fish/completions/simple-sync.fish")
+
+        elif shell == "tcsh":
+            print("1. Ensure argcomplete is installed:")
+            print("   pip install argcomplete")
+            print()
+            print("2. Add to ~/.tcshrc:")
+            print("   eval `register-python-argcomplete --shell tcsh simple-sync`")
+
+        print()
+        print("Or run: simple-sync completion --install")
+
+        return 0
 
 
 class SyncRunner:
@@ -599,6 +766,11 @@ def _format_timestamp(timestamp: float) -> str:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Entry point for console_scripts."""
     parser = build_parser()
+
+    # Enable argcomplete if available
+    if ARGCOMPLETE_AVAILABLE:
+        argcomplete.autocomplete(parser)
+
     args = parser.parse_args(list(argv) if argv is not None else None)
     configure_logging(verbose=args.verbose, quiet=args.quiet)
     handler: Handler = getattr(args, "func")

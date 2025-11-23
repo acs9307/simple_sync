@@ -74,6 +74,47 @@ simple-sync run my-sync
 
 The profile will be saved for future use, but you can run it once and ignore it afterward. The tool handles bidirectional sync automatically using the "newest" policy by default.
 
+### Tab Completion
+
+`simple-sync` supports intelligent tab completion for bash, zsh, fish, and tcsh shells. Completion works for:
+- Commands (run, profiles, status, etc.)
+- Profile names from your configuration
+- Command-line options
+
+**Quick setup:**
+
+```bash
+simple-sync completion --install
+```
+
+This auto-detects your shell and installs completion. After installation, restart your shell or source your rc file:
+
+```bash
+# Bash
+source ~/.bashrc
+
+# Zsh
+source ~/.zshrc
+
+# Fish - just restart the shell
+```
+
+**Manual setup:**
+
+If you prefer manual installation, see instructions with:
+
+```bash
+simple-sync completion
+```
+
+Once installed, you can use tab completion:
+
+```bash
+simple-sync run <TAB>        # Shows available profiles
+simple-sync status <TAB>     # Shows available profiles
+simple-sync <TAB>            # Shows available commands
+```
+
 ### Text File Merging
 
 When both directories have modified the same file between syncs, `simple-sync` can attempt to automatically merge text files (similar to git merge). This feature is enabled by default and works for common text file formats (.py, .js, .md, etc.).
