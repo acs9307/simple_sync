@@ -264,16 +264,14 @@ def _handle_completion(args: argparse.Namespace) -> int:
     # Detect shell if not specified
     shell = args.shell
     if not shell:
-        shell_env = os.environ.get("SHELL", "")
-        if "bash" in shell_env:
+        shell_env = Path(os.environ.get("SHELL", "")).name
+        if shell_env in {"bash", "zsh", "fish", "tcsh"}:
+            shell = shell_env
+        elif os.environ.get("BASH_VERSION"):
             shell = "bash"
-        elif "zsh" in shell_env:
+        elif os.environ.get("ZSH_VERSION"):
             shell = "zsh"
-        elif "fish" in shell_env:
-            shell = "fish"
-        elif "tcsh" in shell_env:
-            shell = "tcsh"
-        else:
+        if not shell:
             print("Could not auto-detect shell. Please specify with --shell")
             return 1
 

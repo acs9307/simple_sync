@@ -9,10 +9,12 @@ WORKDIR /app
 COPY . /app
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends openssh-server openssh-client && \
+    apt-get install -y --no-install-recommends openssh-server openssh-client bash-completion && \
     rm -rf /var/lib/apt/lists/* && \
     mkdir -p /var/run/sshd /root/.ssh /srv/local /srv/remote && \
-    pip install --no-cache-dir .
+    pip install --no-cache-dir . && \
+    register-python-argcomplete --shell bash simple-sync > /etc/bash_completion.d/simple-sync && \
+    printf '[[ -f /etc/bash_completion ]] && . /etc/bash_completion\n' >> /root/.bashrc
 
 COPY docker/ssh-agent/sshd_config /etc/ssh/sshd_config
 COPY docker/ssh-agent/entrypoint.sh /entrypoint.sh
