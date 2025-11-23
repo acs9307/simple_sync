@@ -283,20 +283,80 @@ def _write_file_content(endpoint: types.Endpoint, root: Path, path: str, content
             Path(tmp_path).unlink(missing_ok=True)
 
 
+def _parse_mtime(value: object) -> Optional[float]:
+    """Safely parse an mtime value to float, returning None if invalid."""
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _stat_mtime(endpoint: types.Endpoint, rel_path: str) -> Optional[float]:
+    """Get the filesystem mtime for local endpoints."""
+    if endpoint.type != types.EndpointType.LOCAL:
+        return None
+    try:
+        return (Path(endpoint.path) / rel_path).stat().st_mtime
+    except FileNotFoundError:
+        return None
+    except OSError as exc:  # pragma: no cover - filesystem failure
+        logger.debug("Unable to stat %s on %s: %s", rel_path, endpoint.id, exc)
+        return None
+
+
+def _resolve_newest_endpoints(op: types.Operation) -> tuple[types.Endpoint, types.Endpoint]:
+    """Determine which endpoint has the newest version for fallback."""
+    if not op.source or not op.destination:
+        raise ExecutionError("MERGE fallback requires source and destination endpoints.")
+
+    source_mtime = _parse_mtime(op.metadata.get("source_mtime"))
+    destination_mtime = _parse_mtime(op.metadata.get("destination_mtime"))
+
+    # Fall back to checking the local filesystem if metadata is missing
+    if source_mtime is None:
+        source_mtime = _stat_mtime(op.source, op.path)
+    if destination_mtime is None:
+        destination_mtime = _stat_mtime(op.destination, op.path)
+
+    if destination_mtime is None or (source_mtime is not None and source_mtime >= destination_mtime):
+        return op.source, op.destination
+    return op.destination, op.source
+
+
+def _resolve_preferred_endpoints(prefer_id: Optional[str], op: types.Operation) -> tuple[types.Endpoint, types.Endpoint]:
+    """Choose endpoints based on a preferred id, defaulting to source first."""
+    if not op.source or not op.destination:
+        raise ExecutionError("MERGE fallback requires source and destination endpoints.")
+
+    if prefer_id == op.destination.id:
+        return op.destination, op.source
+    return op.source, op.destination
+
+
 def _apply_fallback(op: types.Operation) -> None:
     """Apply fallback policy when merge fails."""
     fallback_policy = op.metadata.get("fallback_policy", "newest")
     logger.info("Applying fallback policy '%s' for %s", fallback_policy, op.path)
 
     if fallback_policy == "newest":
-        # Use newest wins - we'd need to know which is newer
-        # For now, prefer source (endpoint A)
+        winner, loser = _resolve_newest_endpoints(op)
         fallback_op = types.Operation(
             type=types.OperationType.COPY,
             path=op.path,
-            source=op.source,
-            destination=op.destination,
+            source=winner,
+            destination=loser,
             metadata={"reason": "merge_fallback_newest"},
+        )
+        _copy(fallback_op, dry_run=False)
+    elif fallback_policy == "prefer":
+        prefer_endpoint = op.metadata.get("fallback_prefer")
+        winner, loser = _resolve_preferred_endpoints(prefer_endpoint, op)
+        fallback_op = types.Operation(
+            type=types.OperationType.COPY,
+            path=op.path,
+            source=winner,
+            destination=loser,
+            metadata={"reason": "merge_fallback_prefer"},
         )
         _copy(fallback_op, dry_run=False)
     elif fallback_policy == "manual":

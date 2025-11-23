@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from simple_sync import types
-from simple_sync.engine import executor, state_store
+from simple_sync.engine import executor, merge, state_store
 
 
 def make_endpoint(root: Path) -> types.Endpoint:
@@ -71,6 +74,36 @@ class TestExecutorMerge(unittest.TestCase):
             src_content = (src_root / "file.txt").read_text()
             dst_content = (dst_root / "file.txt").read_text()
             self.assertEqual(src_content, dst_content)
+
+    def test_merge_fallback_newest_prefers_newer_file(self):
+        """Test newest fallback copies from the most recently modified file."""
+        with tempfile.TemporaryDirectory() as src_tmp, tempfile.TemporaryDirectory() as dst_tmp:
+            src_root = Path(src_tmp)
+            dst_root = Path(dst_tmp)
+
+            (src_root / "file.txt").write_text("older version\n")
+            (dst_root / "file.txt").write_text("newer version\n")
+
+            older_time = time.time() - 120
+            newer_time = time.time()
+            os.utime(src_root / "file.txt", (older_time, older_time))
+            os.utime(dst_root / "file.txt", (newer_time, newer_time))
+
+            op = types.Operation(
+                type=types.OperationType.MERGE,
+                path="file.txt",
+                source=make_endpoint(src_root),
+                destination=make_endpoint(dst_root),
+                metadata={"fallback_policy": "newest"},
+            )
+
+            # Force merge failure to exercise fallback path
+            with mock.patch("simple_sync.engine.executor._simple_two_way_merge") as mock_merge:
+                mock_merge.return_value = merge.MergeResult(success=False, conflicts=["conflict"])
+                executor.apply_operations([op])
+
+            self.assertEqual((src_root / "file.txt").read_text(), "newer version\n")
+            self.assertEqual((dst_root / "file.txt").read_text(), "newer version\n")
 
     def test_merge_operation_dry_run(self):
         """Test merge operation in dry-run mode doesn't modify files."""

@@ -28,7 +28,7 @@ def is_text_file(path: str | Path) -> bool:
     """Determine if a file is likely a text file based on extension."""
     # Common text file extensions
     text_extensions = {
-        ".txt", ".md", ".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".c", ".cpp", ".h", ".hpp",
+        ".md", ".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".c", ".cpp", ".h", ".hpp",
         ".cs", ".rb", ".go", ".rs", ".php", ".html", ".css", ".scss", ".sass", ".less",
         ".xml", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".sh", ".bash",
         ".zsh", ".fish", ".sql", ".r", ".R", ".m", ".swift", ".kt", ".scala", ".clj",
@@ -39,6 +39,10 @@ def is_text_file(path: str | Path) -> bool:
 
     path_obj = Path(path) if isinstance(path, str) else path
     suffix = path_obj.suffix.lower()
+
+    # Avoid merging generic .txt files; they're often user content better handled by policy
+    if suffix == ".txt":
+        return False
 
     # Check extension
     if suffix in text_extensions:

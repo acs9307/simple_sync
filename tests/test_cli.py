@@ -291,7 +291,7 @@ class TestCliRunCommand(unittest.TestCase):
                 self.assertEqual(host, "example.com")
                 return remote_entries.copy()
 
-            def fake_apply_operations(ops, dry_run: bool = False):
+            def fake_apply_operations(ops, dry_run: bool = False, **_kwargs):
                 operations.extend(ops)
                 for op in ops:
                     if op.type == types.OperationType.COPY and op.destination.type == types.EndpointType.SSH:

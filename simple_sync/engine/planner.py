@@ -147,6 +147,8 @@ def _classify_path(
                             "fallback_policy": merge_fallback,
                             "fallback_prefer": prefer_endpoint,
                             "fallback_manual_behavior": manual_behavior,
+                            "source_mtime": entry_a.mtime,
+                            "destination_mtime": entry_b.mtime,
                         },
                     )
                 )
