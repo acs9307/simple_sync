@@ -7,6 +7,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+import os
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -169,6 +170,43 @@ class TestCliInitCommand(unittest.TestCase):
             self.assertIn("demo", content)
             self.assertIn("example.com", content)
             self.assertIn("Profile created", stderr)
+
+    def test_init_command_normalizes_local_paths_to_absolute(self):
+        responses = iter(
+            [
+                "",  # description -> use default
+                "",  # endpoint1 name -> default
+                "",  # endpoint1 type -> default local
+                "relative-src",  # endpoint1 path (relative)
+                "",  # endpoint2 name -> default remote
+                "",  # endpoint2 type -> default ssh
+                "example.com",  # endpoint2 host
+                "/tmp/remote",  # endpoint2 path
+                "y",  # default ignore patterns
+            ]
+        )
+
+        def fake_input(prompt: str) -> str:
+            return next(responses)
+
+        with tempfile.TemporaryDirectory() as config_tmp, tempfile.TemporaryDirectory() as workdir:
+            original_cwd = os.getcwd()
+            os.chdir(workdir)
+            try:
+                with mock.patch("builtins.input", side_effect=fake_input):
+                    exit_code, stdout, stderr = _run_cli(
+                        ["--config-dir", config_tmp, "init", "demo"]
+                    )
+            finally:
+                os.chdir(original_cwd)
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stdout, "")
+            self.assertIn("Profile created", stderr)
+            profile_path = Path(config_tmp) / "profiles" / "demo.toml"
+            profile_cfg = config.load_profile_from_path(profile_path)
+            expected_local_path = str((Path(workdir) / "relative-src").resolve())
+            self.assertEqual(profile_cfg.endpoints["local"].path, expected_local_path)
+            self.assertEqual(profile_cfg.endpoints["remote"].path, "/tmp/remote")
 
 
 class TestCliRunCommand(unittest.TestCase):

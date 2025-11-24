@@ -242,3 +242,14 @@ Goal: Fill gaps in development for completing proejct.
   - ✅ 9.6 Daemon scheduling ignores schedule.run_on_start and only exposes --once; there’s no way to delay the initial
     run or request the foreground-debug mode mentioned in TODO 7.3 (simple_sync/daemon/runner.py:67-77, simple_sync/
     cli.py:84-99).
+
+⸻
+
+Epic 10 - Pipeline
+
+Goal: Improve pipelining for simply building a release package.
+
+  - 10.1 When building a release, use the latest git tag for the release version.  Official versions
+        should follow the format of 'v0.1.2'.
+  - 10.2 Have a simple python script that will build a full release including a python package and a
+        homebrew package for deployment.

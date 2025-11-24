@@ -168,7 +168,18 @@ On macOS launchd you can create a plist pointing to the same command. These exam
 
 ## Installation
 
-The easiest way to install is via [pipx](https://pipx.pypa.io):
+### Homebrew (macOS)
+
+```bash
+brew tap acs9307/simple_sync https://github.com/acs9307/simple_sync
+brew install acs9307/simple_sync/simple-sync
+```
+
+The formula installs completions for bash, zsh, and fish automatically. If you prefer a Python-only install, use `pipx` below.
+
+### pipx (cross-platform)
+
+The easiest way to install via Python packaging is [pipx](https://pipx.pypa.io):
 
 ```bash
 pipx install simple-sync

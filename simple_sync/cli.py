@@ -627,7 +627,8 @@ class InitWizard:
         endpoint_type = self._prompt_type(name, default_type)
         if endpoint_type == "local":
             path = self._prompt(f"Local path for '{name}'")
-            return config.EndpointBlock(name=name, type="local", path=path)
+            absolute_path = str(Path(path).expanduser().resolve())
+            return config.EndpointBlock(name=name, type="local", path=absolute_path)
         host = self._prompt(f"SSH host for '{name}'")
         path = self._prompt(f"Remote path for '{name}'")
         return config.EndpointBlock(name=name, type="ssh", host=host, path=path)
