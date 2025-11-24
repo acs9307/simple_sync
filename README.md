@@ -198,6 +198,25 @@ pip install '.[binary]'
 
 The resulting `dist/simple-sync/simple-sync` executable includes its own Python runtime; no system Python is required to run it. Integration tests in `tests/test_binary_build.py` exercise both `run` and `daemon` paths against the built binary.
 
+## Release versioning
+
+When preparing a release, tag the repo with the desired semantic version (e.g., `v0.1.2`) and sync project metadata from that tag:
+
+```bash
+git tag v0.1.2
+python scripts/apply_version_from_tag.py
+```
+
+This updates `pyproject.toml` and `simple_sync/__init__.py` to the tag’s version so packages and binaries use the correct release number.
+
+To build a release package directly from the latest tag in one step:
+
+```bash
+./scripts/build_release.sh
+```
+
+This syncs the version and runs `python -m build`, writing artifacts under `dist/`.
+
 ## Windows support (preview)
 
 Windows 10/11 is supported for local↔local profiles and the CLI/daemon. Configuration lives under `%APPDATA%\simple_sync` by default, mirroring the Linux/macOS layout. Remote endpoints rely on `ssh`/`scp` being on your `PATH`; install the built-in OpenSSH (Windows Optional Features) or Git for Windows to provide these binaries. Path handling is normalized to POSIX-style separators internally, so ignore patterns should use `/`. Known caveats: remote discovery uses POSIX `find` on the SSH host, and symlink or alternate stream semantics on NTFS are not yet considered.
