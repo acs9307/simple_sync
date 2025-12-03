@@ -115,6 +115,41 @@ class TestCliCommands(unittest.TestCase):
         self.assertNotEqual(stdout, "")
         self.assertEqual("", stderr)
 
+    def test_run_prompts_to_initialize_missing_remote_and_copies(self):
+        with tempfile.TemporaryDirectory() as tmpdir, tempfile.TemporaryDirectory() as src_tmp:
+            config_dir = Path(tmpdir)
+            src_root = Path(src_tmp)
+            dst_root = "/remote"
+            (src_root / "file.txt").write_text("hello")
+
+            profile_cfg = config.build_profile_template()
+            profile_cfg.profile.name = "demo"
+            profile_cfg.profile.description = "Demo profile"
+            profile_cfg.endpoints = {
+                "local": config.EndpointBlock(name="local", type="local", path=str(src_root)),
+                "remote": config.EndpointBlock(name="remote", type="ssh", host="example.com", path=dst_root),
+            }
+            base = config.ensure_config_structure(config_dir)
+            (base / "profiles" / "demo.toml").write_text(config.profile_to_toml(profile_cfg))
+
+            def fake_run_ssh_command(*, remote_command, **_kwargs):
+                if remote_command[:2] == ["test", "-d"]:
+                    return cli.ssh_transport.SSHResult(exit_code=1, stdout="", stderr="")
+                if remote_command[:2] == ["mkdir", "-p"]:
+                    return cli.ssh_transport.SSHResult(exit_code=0, stdout="", stderr="")
+                return cli.ssh_transport.SSHResult(exit_code=0, stdout="", stderr="")
+
+            with mock.patch("builtins.input", return_value="y"), mock.patch(
+                "simple_sync.engine.snapshot.listing.list_remote_entries", return_value={}
+            ), mock.patch("simple_sync.ssh.transport.run_ssh_command", side_effect=fake_run_ssh_command), mock.patch(
+                "simple_sync.ssh.copy.copy_local_to_remote"
+            ) as mock_push:
+                exit_code, stdout, stderr = _run_cli(["--config-dir", str(config_dir), "run", "demo"])
+
+        self.assertEqual(exit_code, 0)
+        mock_push.assert_called_once()
+        self.assertIn("Initialize", stdout + stderr)
+
     def test_edit_command_opens_profile_in_editor(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             base = config.ensure_config_structure(Path(tmpdir))
@@ -365,8 +400,15 @@ class TestCliRunCommand(unittest.TestCase):
                             path=op.path, is_dir=False, size=source_file.stat().st_size, mtime=source_file.stat().st_mtime
                         )
 
+            def fake_run_ssh_command(*, remote_command, **_kwargs):
+                if remote_command[:2] == ["test", "-d"]:
+                    return cli.ssh_transport.SSHResult(exit_code=0, stdout="", stderr="")
+                return cli.ssh_transport.SSHResult(exit_code=0, stdout="", stderr="")
+
             with mock.patch("simple_sync.engine.snapshot.listing.list_remote_entries", side_effect=fake_listing), mock.patch(
                 "simple_sync.engine.executor.apply_operations", side_effect=fake_apply_operations
+            ), mock.patch("builtins.input", return_value="n"), mock.patch(
+                "simple_sync.ssh.transport.run_ssh_command", side_effect=fake_run_ssh_command
             ):
                 exit_code, stdout, stderr = _run_cli(["--config-dir", config_tmp, "run", "remote"])
 

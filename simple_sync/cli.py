@@ -24,6 +24,8 @@ from . import __version__, config, types
 from .daemon import DaemonRunner
 from .engine import executor, planner, snapshot, state_store
 from .logging import configure_logging
+from .ssh import transport as ssh_transport
+from .engine.executor import _require_host
 
 # Import completers if argcomplete is available
 if ARGCOMPLETE_AVAILABLE:
@@ -450,9 +452,10 @@ def _handle_edit(args: argparse.Namespace) -> int:
 class SyncRunner:
     """Coordinates snapshots, planner, executor, and state persistence."""
 
-    def __init__(self, *, config_dir: Optional[str] = None):
+    def __init__(self, *, config_dir: Optional[str] = None, input_func: Callable[[str], str] | None = None):
         self._config_dir = Path(config_dir).expanduser() if config_dir else None
         self._preconnect_done: bool = False
+        self._input = input_func or input
 
     def run(self, *, profile_name: str, dry_run: bool) -> None:
         base = config.ensure_config_structure(self._config_dir)
@@ -470,6 +473,8 @@ class SyncRunner:
         if preconnect_command and not self._preconnect_done:
             self._run_preconnect(preconnect_command, ssh_env)
             self._preconnect_done = True
+
+        self._ensure_endpoints_available(endpoint_a, endpoint_b)
 
         snap_a = snapshot.build_snapshot_for_endpoint(
             endpoint_a, ignore_patterns=ignore_patterns, ssh_command=endpoint_a.ssh_command
@@ -532,6 +537,77 @@ class SyncRunner:
             plan_result.conflicts,
         )
         logger.info("Synchronization complete. State saved to %s.", saved_path)
+    def _ensure_endpoints_available(self, endpoint_a: types.Endpoint, endpoint_b: types.Endpoint) -> None:
+        missing: list[tuple[types.Endpoint, Optional[str]]] = []
+        for endpoint in (endpoint_a, endpoint_b):
+            exists, error = self._endpoint_exists(endpoint)
+            if not exists:
+                missing.append((endpoint, error))
+
+        if not missing:
+            return
+
+        if len(missing) == 2:
+            raise RuntimeError("Both endpoints are missing their root directories; refusing to continue.")
+
+        missing_ep, missing_err = missing[0]
+        source_ep = endpoint_b if missing_ep is endpoint_a else endpoint_a
+
+        if not self._prompt_initialize_missing(missing_ep, source_ep, missing_err):
+            raise RuntimeError(f"Endpoint '{missing_ep.id}' is missing; initialization declined.")
+
+        self._initialize_missing_endpoint(missing_ep)
+
+    def _endpoint_exists(self, endpoint: types.Endpoint) -> tuple[bool, Optional[str]]:
+        if endpoint.type == types.EndpointType.LOCAL:
+            return Path(endpoint.path).exists(), None
+
+        remote_cmd = ["test", "-d", str(endpoint.path)]
+        result = ssh_transport.run_ssh_command(
+            host=_require_host(endpoint),
+            remote_command=remote_cmd,
+            ssh_command=endpoint.ssh_command or "ssh",
+        )
+        if result.prompt_detected or result.auth_failed:
+            raise RuntimeError("SSH authentication prompt detected; refusing to continue.")
+        return result.exit_code == 0, result.stderr.strip() or None
+
+    def _prompt_initialize_missing(
+        self, missing: types.Endpoint, source: types.Endpoint, error: Optional[str]
+    ) -> bool:
+        location = str(missing.path)
+        if missing.type == types.EndpointType.SSH and missing.host:
+            location = f"{missing.host}:{location}"
+        print(f"Endpoint '{missing.id}' is missing directory {location}.")
+        if error:
+            print(f"Details: {error}")
+        print(f"Initialize '{missing.id}' by copying data from '{source.id}'?")
+        while True:
+            response = self._input("Proceed? [y/N]: ").strip().lower()
+            if response in {"y", "yes"}:
+                return True
+            if response in {"", "n", "no"}:
+                return False
+            print("Please answer yes or no.")
+
+    def _initialize_missing_endpoint(self, endpoint: types.Endpoint) -> None:
+        if endpoint.type == types.EndpointType.LOCAL:
+            Path(endpoint.path).mkdir(parents=True, exist_ok=True)
+            logger.info("Created local directory %s.", endpoint.path)
+            return
+
+        remote_cmd = ["mkdir", "-p", str(endpoint.path)]
+        result = ssh_transport.run_ssh_command(
+            host=_require_host(endpoint),
+            remote_command=remote_cmd,
+            ssh_command=endpoint.ssh_command or "ssh",
+        )
+        if result.prompt_detected or result.auth_failed:
+            raise RuntimeError("SSH authentication prompt detected while creating remote directory.")
+        if result.exit_code != 0:
+            message = result.stderr.strip() or "Failed to create remote directory."
+            raise RuntimeError(message)
+        logger.info("Initialized remote directory %s:%s.", endpoint.host, endpoint.path)
 
     def _prepare_endpoints(self, profile_cfg: config.ProfileConfig) -> tuple[types.Endpoint, types.Endpoint]:
         endpoint_blocks = list(profile_cfg.endpoints.values())
