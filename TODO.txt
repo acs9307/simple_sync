@@ -251,5 +251,5 @@ Goal: Improve pipelining for simply building a release package.
 
   - ✅ 10.1 When building a release, use the latest git tag for the release version.  Official versions
         should follow the format of 'v0.1.2'.
-  - 10.2 Have a simple python script that will build a full release including a python package and a
+  - ✅ 10.2 Have a simple python script that will build a full release including a python package and a
         homebrew package for deployment.

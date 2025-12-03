@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import subprocess
 from pathlib import Path
+from typing import Optional
 
 VERSION_TAG_PATTERN = re.compile(r"^v(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)$")
 
@@ -92,3 +93,66 @@ def resolve_version_from_tags(repo_path: Path | str = ".") -> str:
     """Resolve the latest git tag to a plain version string."""
     tag = latest_version_tag(repo_path)
     return version_from_tag(tag)
+
+
+def tag_commit(tag: str, repo_path: Path | str = ".") -> str:
+    """Return the commit hash for a given tag."""
+    repo = Path(repo_path)
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", tag],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:  # pragma: no cover - environment dependent
+        raise VersionError(f"Failed to resolve commit for tag {tag}: {exc}") from exc
+    return result.stdout.strip()
+
+
+def update_formula(
+    *,
+    formula_path: Path,
+    version: str,
+    revision: str,
+    url: Optional[str] = None,
+    dry_run: bool = False,
+) -> None:
+    """
+    Update a Homebrew formula with the provided version and revision.
+
+    Optionally updates the source URL when provided.
+    """
+    text = formula_path.read_text()
+
+    if url:
+        text, url_count = re.subn(
+            r'(?m)^(url\s*")([^"]+)(")',
+            rf'\1{url}\3',
+            text,
+            count=1,
+        )
+        if url_count == 0:
+            raise VersionError("Could not find url field in formula.")
+
+    text, rev_count = re.subn(
+        r'(?m)(revision:\s*")([0-9a-fA-F]+)(")',
+        rf'\1{revision}\3',
+        text,
+        count=1,
+    )
+    if rev_count == 0:
+        raise VersionError("Could not find revision field in formula.")
+
+    text, ver_count = re.subn(
+        r'(?m)^(version\s*")([^"]+)(")',
+        rf'\1{version}\3',
+        text,
+        count=1,
+    )
+    if ver_count == 0:
+        raise VersionError("Could not find version field in formula.")
+
+    if dry_run:
+        return
+    formula_path.write_text(text)

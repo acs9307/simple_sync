@@ -99,6 +99,8 @@ source ~/.zshrc
 # Fish - just restart the shell
 ```
 
+If you installed with `pipx`, the package bundles `simple-sync-register-python-argcomplete` so completion works without `pipx install --include-deps`.
+
 **Manual setup:**
 
 If you prefer manual installation, see instructions with:
@@ -187,6 +189,12 @@ pipx install simple-sync
 
 This keeps the CLI isolated while making the `simple-sync` command available on your PATH. Alternatively, you can use `pip install simple-sync` inside a virtual environment.
 
+### Uninstalling
+
+- Homebrew: `brew uninstall simple-sync`
+- pipx: `pipx uninstall simple-sync` (optionally remove any completion lines you added to your shell rc)
+- pip/virtualenv: `pip uninstall simple-sync`
+
 ## Standalone binaries
 
 For macOS and Linux targets you can build a standalone bundle with [PyInstaller](https://pyinstaller.org):
@@ -216,6 +224,14 @@ To build a release package directly from the latest tag in one step:
 ```
 
 This syncs the version and runs `python -m build`, writing artifacts under `dist/`.
+
+To build both the Python artifacts and refreshed Homebrew formula/archive from the latest tag:
+
+```bash
+python scripts/build_full_release.py
+```
+
+This updates version metadata, rebuilds sdist/wheel, regenerates a git-archive for the tag (for Homebrew), and updates `Formula/simple-sync.rb` with the new version/revision.
 
 ## Windows support (preview)
 

@@ -26,6 +26,7 @@ binary = ["pyinstaller>=6.0,<7.0"]
 
 [project.scripts]
 simple-sync = "simple_sync.cli:main"
+simple-sync-register-python-argcomplete = "argcomplete.shellcompletion:main"
 
 [project.urls]
 Homepage = "https://example.com/simple_sync"

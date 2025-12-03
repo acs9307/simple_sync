@@ -78,3 +78,27 @@ def test_update_version_files_errors_when_missing_fields(tmp_path: Path) -> None
 
     with pytest.raises(versioning.VersionError):
         versioning.update_version_files("1.0.0", pyproject_path=pyproject, init_path=init_file)
+
+
+def test_tag_commit_resolves_tag_hash(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    _git(repo, "tag", "v0.0.1")
+    commit = versioning.tag_commit("v0.0.1", repo)
+    assert len(commit) == 40
+
+
+def test_update_formula_rewrites_version_and_revision(tmp_path: Path) -> None:
+    formula = tmp_path / "simple-sync.rb"
+    formula.write_text(
+        "\n".join(
+            [
+                'url "https://github.com/acs9307/simple_sync.git",',
+                '    revision: "oldrev"',
+                'version "0.0.0"',
+            ]
+        )
+    )
+    versioning.update_formula(formula_path=formula, version="1.2.3", revision="abc123")
+    text = formula.read_text()
+    assert 'revision: "abc123"' in text
+    assert 'version "1.2.3"' in text

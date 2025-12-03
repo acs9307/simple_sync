@@ -31,6 +31,16 @@ logger = logging.getLogger(__name__)
 DEFAULT_IGNORE_PATTERNS = [".git", "node_modules", "__pycache__"]
 
 
+def _find_register_python_argcomplete() -> Optional[str]:
+    """Return the available register-python-argcomplete command."""
+    import shutil
+
+    for cmd in ("register-python-argcomplete", "simple-sync-register-python-argcomplete"):
+        if shutil.which(cmd):
+            return cmd
+    return None
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Create the CLI parser with all supported subcommands."""
     parser = argparse.ArgumentParser(
@@ -259,7 +269,11 @@ def _handle_completion(args: argparse.Namespace) -> int:
         print("Install it with: pip install argcomplete")
         return 1
 
-    import shutil
+    register_cmd = _find_register_python_argcomplete()
+    if not register_cmd:
+        print("Tab completion requires the 'argcomplete' package.")
+        print("Install it with: pip install argcomplete")
+        return 1
 
     # Detect shell if not specified
     shell = args.shell
@@ -279,7 +293,7 @@ def _handle_completion(args: argparse.Namespace) -> int:
         # Attempt to install completion
         try:
             if shell == "bash":
-                completion_script = "eval \"$(register-python-argcomplete simple-sync)\""
+                completion_script = f'eval "$({register_cmd} simple-sync)"'
                 bashrc = Path.home() / ".bashrc"
 
                 # Check if already installed
@@ -296,7 +310,7 @@ def _handle_completion(args: argparse.Namespace) -> int:
                     [
                         "autoload -U bashcompinit",
                         "bashcompinit",
-                        "eval \"$(register-python-argcomplete --shell zsh simple-sync)\"",
+                        f'eval "$({register_cmd} --shell zsh simple-sync)"',
                     ]
                 )
                 zshrc = Path.home() / ".zshrc"
@@ -315,7 +329,7 @@ def _handle_completion(args: argparse.Namespace) -> int:
                 fish_file = fish_dir / "simple-sync.fish"
 
                 result = subprocess.run(
-                    ["register-python-argcomplete", "--shell", "fish", "simple-sync"],
+                    [register_cmd, "--shell", "fish", "simple-sync"],
                     capture_output=True,
                     text=True,
                 )
@@ -330,7 +344,7 @@ def _handle_completion(args: argparse.Namespace) -> int:
             elif shell == "tcsh":
                 print("tcsh completion requires manual setup.")
                 print("Add the following to your ~/.tcshrc:")
-                print("  eval `register-python-argcomplete --shell tcsh simple-sync`")
+                print(f"  eval `{register_cmd} --shell tcsh simple-sync`")
 
         except Exception as exc:
             logger.error("Failed to install completion: %s", exc)
@@ -348,7 +362,7 @@ def _handle_completion(args: argparse.Namespace) -> int:
             print("   pip install argcomplete")
             print()
             print("2. Add to ~/.bashrc:")
-            print("   eval \"$(register-python-argcomplete simple-sync)\"")
+            print(f"   eval \"$({register_cmd} simple-sync)\"")
             print()
             print("3. Reload your shell:")
             print("   source ~/.bashrc")
@@ -360,7 +374,7 @@ def _handle_completion(args: argparse.Namespace) -> int:
             print("2. Add to ~/.zshrc:")
             print("   autoload -U bashcompinit")
             print("   bashcompinit")
-            print("   eval \"$(register-python-argcomplete --shell zsh simple-sync)\"")
+            print(f"   eval \"$({register_cmd} --shell zsh simple-sync)\"")
             print()
             print("3. Reload your shell:")
             print("   source ~/.zshrc")
@@ -370,14 +384,14 @@ def _handle_completion(args: argparse.Namespace) -> int:
             print("   pip install argcomplete")
             print()
             print("2. Generate and save completion script:")
-            print("   register-python-argcomplete --shell fish simple-sync > ~/.config/fish/completions/simple-sync.fish")
+            print(f"   {register_cmd} --shell fish simple-sync > ~/.config/fish/completions/simple-sync.fish")
 
         elif shell == "tcsh":
             print("1. Ensure argcomplete is installed:")
             print("   pip install argcomplete")
             print()
             print("2. Add to ~/.tcshrc:")
-            print("   eval `register-python-argcomplete --shell tcsh simple-sync`")
+            print(f"   eval `{register_cmd} --shell tcsh simple-sync`")
 
         print()
         print("Or run: simple-sync completion --install")

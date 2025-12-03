@@ -38,6 +38,12 @@ def main() -> int:
         help="Path to simple_sync/__init__.py (default: <repo>/simple_sync/__init__.py).",
     )
     parser.add_argument(
+        "--formula",
+        type=Path,
+        default=None,
+        help="Optional path to Formula/simple-sync.rb to update alongside version files.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Resolve and validate versions without writing files.",
@@ -48,14 +54,25 @@ def main() -> int:
     pyproject_path = args.pyproject or (repo / "pyproject.toml")
     init_path = args.init or (repo / "simple_sync" / "__init__.py")
 
+    formula_path = args.formula or (repo / "Formula" / "simple-sync.rb")
+
     try:
-        version = versioning.resolve_version_from_tags(repo)
+        tag = versioning.latest_version_tag(repo)
+        version = versioning.version_from_tag(tag)
         versioning.update_version_files(
             version,
             pyproject_path=pyproject_path,
             init_path=init_path,
             dry_run=args.dry_run,
         )
+        if formula_path.exists():
+            revision = versioning.tag_commit(tag, repo)
+            versioning.update_formula(
+                formula_path=formula_path,
+                version=version,
+                revision=revision,
+                dry_run=args.dry_run,
+            )
     except versioning.VersionError as exc:
         parser.error(str(exc))
     print(f"Set project version to {version} from latest tag.")
