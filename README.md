@@ -72,6 +72,11 @@ simple-sync run my-sync
   simple-sync -v run my-sync
   ```
 
+- Edit a profile in your editor:
+  ```bash
+  simple-sync edit my-sync
+  ```
+
 The profile will be saved for future use, but you can run it once and ignore it afterward. The tool handles bidirectional sync automatically using the "newest" policy by default.
 
 ### Tab Completion

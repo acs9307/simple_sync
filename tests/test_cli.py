@@ -115,6 +115,33 @@ class TestCliCommands(unittest.TestCase):
         self.assertNotEqual(stdout, "")
         self.assertEqual("", stderr)
 
+    def test_edit_command_opens_profile_in_editor(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = config.ensure_config_structure(Path(tmpdir))
+            profile_cfg = config.build_profile_template()
+            profile_cfg.profile.name = "demo"
+            profile_cfg.profile.description = "Demo profile"
+            profile_path = base / "profiles" / "demo.toml"
+            profile_path.write_text(config.profile_to_toml(profile_cfg))
+
+            with mock.patch.dict(os.environ, {"EDITOR": "cat"}):
+                with mock.patch("subprocess.run") as mock_run:
+                    mock_run.return_value = subprocess.CompletedProcess(["cat"], 0)
+                    exit_code, stdout, stderr = _run_cli(["--config-dir", tmpdir, "edit", "demo"])
+
+        self.assertEqual(exit_code, 0)
+        mock_run.assert_called_once()
+        invoked = mock_run.call_args[0][0]
+        self.assertEqual(invoked[0], "cat")
+        self.assertEqual(invoked[-1], str(profile_path))
+        self.assertIn("Opening", stdout)
+
+    def test_edit_command_requires_existing_profile(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exit_code, stdout, stderr = _run_cli(["--config-dir", tmpdir, "edit", "missing"])
+        self.assertNotEqual(exit_code, 0)
+        self.assertIn("missing", stderr)
+
 
 class TestCliProfilesCommand(unittest.TestCase):
     """Tests for the profiles listing command."""

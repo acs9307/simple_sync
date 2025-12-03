@@ -5,7 +5,10 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import shlex
+import shutil
 import subprocess
+import sys
 from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,12 +36,27 @@ DEFAULT_IGNORE_PATTERNS = [".git", "node_modules", "__pycache__"]
 
 def _find_register_python_argcomplete() -> Optional[str]:
     """Return the available register-python-argcomplete command."""
-    import shutil
-
     for cmd in ("register-python-argcomplete", "simple-sync-register-python-argcomplete"):
         if shutil.which(cmd):
             return cmd
     return None
+
+
+def _resolve_editor_command(target: Path) -> List[str]:
+    """
+    Determine which editor to launch for a profile file.
+
+    Prefers $VISUAL/$EDITOR, then common terminal editors, then vim.
+    """
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
+    if editor:
+        return shlex.split(editor) + [str(target)]
+
+    for candidate in ("vim", "nano", "vi"):
+        if shutil.which(candidate):
+            return [candidate, str(target)]
+
+    return ["vim", str(target)]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -165,6 +183,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Target shell for completion (auto-detected if not specified).",
     )
     completion_parser.set_defaults(func=_handle_completion)
+
+    edit_parser = subparsers.add_parser(
+        "edit",
+        help="Open a profile configuration in your editor.",
+    )
+    edit_profile_arg = edit_parser.add_argument("profile", help="Profile to edit.")
+    if ARGCOMPLETE_AVAILABLE:
+        edit_profile_arg.completer = completion.profile_completer
+    edit_parser.set_defaults(func=_handle_edit)
 
     return parser
 
@@ -397,6 +424,27 @@ def _handle_completion(args: argparse.Namespace) -> int:
         print("Or run: simple-sync completion --install")
 
         return 0
+
+
+def _handle_edit(args: argparse.Namespace) -> int:
+    """Open a profile config file in the user's editor."""
+    base = config.ensure_config_structure(Path(args.config_dir).expanduser() if args.config_dir else None)
+    profile_path = base / "profiles" / f"{args.profile}.toml"
+    if not profile_path.exists():
+        logger.error("Profile '%s' not found at %s.", args.profile, profile_path)
+        return 1
+
+    command = _resolve_editor_command(profile_path)
+    print(f"Opening {profile_path} with: {' '.join(shlex.quote(part) for part in command)}")
+    try:
+        result = subprocess.run(command)
+    except FileNotFoundError:
+        logger.error("Editor command '%s' not found. Set $VISUAL or $EDITOR, or install vim.", command[0])
+        return 1
+    except Exception as exc:  # pragma: no cover - unexpected launcher errors
+        logger.error("Failed to launch editor: %s", exc)
+        return 1
+    return result.returncode
 
 
 class SyncRunner:
