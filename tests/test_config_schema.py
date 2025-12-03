@@ -29,7 +29,8 @@ class TestProfileTemplate(unittest.TestCase):
 
 class TestExampleToml(unittest.TestCase):
     def test_example_file_lists_expected_sections(self):
-        text = Path("examples/profile.example.toml").read_text()
+        repo_root = Path(__file__).resolve().parents[1]
+        text = (repo_root / "examples" / "profile.example.toml").read_text()
         for section in [
             "[profile]",
             "[conflict]",

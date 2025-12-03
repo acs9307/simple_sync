@@ -233,6 +233,11 @@ python scripts/build_full_release.py
 
 This updates version metadata, rebuilds sdist/wheel, regenerates a git-archive for the tag (for Homebrew), and updates `Formula/simple-sync.rb` with the new version/revision.
 
+## Running tests
+
+- Local: `pip install -e . pytest` then `python -m pytest` (add `-k <pattern>` to filter).
+- Docker harness (no local deps): `python scripts/run_docker_tests.py` (use `--rebuild` to refresh the image; `--pytest-args "-k ssh"` to narrow tests).
+
 ## Windows support (preview)
 
 Windows 10/11 is supported for local↔local profiles and the CLI/daemon. Configuration lives under `%APPDATA%\simple_sync` by default, mirroring the Linux/macOS layout. Remote endpoints rely on `ssh`/`scp` being on your `PATH`; install the built-in OpenSSH (Windows Optional Features) or Git for Windows to provide these binaries. Path handling is normalized to POSIX-style separators internally, so ignore patterns should use `/`. Known caveats: remote discovery uses POSIX `find` on the SSH host, and symlink or alternate stream semantics on NTFS are not yet considered.

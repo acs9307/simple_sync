@@ -94,7 +94,7 @@ def test_update_formula_rewrites_version_and_revision(tmp_path: Path) -> None:
             [
                 'url "https://github.com/acs9307/simple_sync.git",',
                 '    revision: "oldrev"',
-                'version "0.0.0"',
+                '  version "0.0.0"',
             ]
         )
     )
@@ -102,3 +102,21 @@ def test_update_formula_rewrites_version_and_revision(tmp_path: Path) -> None:
     text = formula.read_text()
     assert 'revision: "abc123"' in text
     assert 'version "1.2.3"' in text
+
+
+def test_update_formula_handles_numeric_prefixes(tmp_path: Path) -> None:
+    """Ensure regex replacement does not treat numbers as backreferences."""
+    formula = tmp_path / "simple-sync.rb"
+    formula.write_text(
+        "\n".join(
+            [
+                'url "https://example.test/archive.tar.gz",',
+                '    revision: "0deadbeef"',
+                'version "0.0.9"',
+            ]
+        )
+    )
+    versioning.update_formula(formula_path=formula, version="0.0.10", revision="0123abcd")
+    text = formula.read_text()
+    assert 'revision: "0123abcd"' in text
+    assert 'version "0.0.10"' in text

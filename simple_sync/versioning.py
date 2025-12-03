@@ -135,18 +135,24 @@ def update_formula(
         if url_count == 0:
             raise VersionError("Could not find url field in formula.")
 
+    def _replace_revision(match: re.Match[str]) -> str:
+        return f'{match.group(1)}{revision}{match.group(3)}'
+
     text, rev_count = re.subn(
-        r'(?m)(revision:\s*")([0-9a-fA-F]+)(")',
-        rf'\1{revision}\3',
+        r'(?m)(revision:\s*")([^"]+)(")',
+        _replace_revision,
         text,
         count=1,
     )
     if rev_count == 0:
         raise VersionError("Could not find revision field in formula.")
 
+    def _replace_version(match: re.Match[str]) -> str:
+        return f'{match.group(1)}{version}{match.group(3)}'
+
     text, ver_count = re.subn(
-        r'(?m)^(version\s*")([^"]+)(")',
-        rf'\1{version}\3',
+        r'(?m)^\s*(version\s*")([^"]+)(")',
+        _replace_version,
         text,
         count=1,
     )

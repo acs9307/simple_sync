@@ -4,8 +4,8 @@ class SimpleSync < Formula
   desc "Profile-driven file synchronization tool"
   homepage "https://github.com/acs9307/simple_sync"
   url "https://github.com/acs9307/simple_sync.git",
-      revision: "2fcad29a141dc67f584f98b6eca06590c58704df"
-  version "0.0.0"
+      revision: "c22afe14dafbc611b7fe6f1c44bf03179e4e47c9"
+version "0.0.4"
   license "MIT"
   head "https://github.com/acs9307/simple_sync.git", branch: "main"
 

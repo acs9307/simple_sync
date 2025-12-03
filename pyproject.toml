@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "simple-sync"
-version = "0.0.3"
+version = "0.0.4"
 description = "A transparent, profile-driven file synchronization tool."
 readme = "README.md"
 requires-python = ">=3.10"
