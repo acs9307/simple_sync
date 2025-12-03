@@ -73,12 +73,16 @@ def _copy(op: types.Operation, *, dry_run: bool) -> None:
                 endpoint=op.destination,
             )
             return
+        if (src_root / op.path).is_dir():
+            _ensure_remote_dir(op.destination, remote_target)
+            return
+        _ensure_remote_dir(op.destination, str(PurePosixPath(remote_target).parent))
         try:
             ssh_copy.copy_local_to_remote(
                 host=_require_host(op.destination),
                 local_path=src_root / op.path,
                 remote_path=remote_target,
-                scp_command=op.destination.ssh_command or "scp",
+                scp_command=_scp_command(op.destination),
             )
         except ssh_copy.RemoteCopyError as exc:
             raise ExecutionError(str(exc)) from exc
@@ -93,12 +97,13 @@ def _copy(op: types.Operation, *, dry_run: bool) -> None:
                 link_target=link_target,
             )
         else:
+            (dst_root / rel_path).parent.mkdir(parents=True, exist_ok=True)
             try:
                 ssh_copy.copy_remote_to_local(
                     host=_require_host(op.source),
                     remote_path=remote_source,
                     local_path=dst_root / rel_path,
-                    scp_command=op.source.ssh_command or "scp",
+                    scp_command=_scp_command(op.source),
                 )
             except ssh_copy.RemoteCopyError as exc:
                 raise ExecutionError(str(exc)) from exc
@@ -198,6 +203,29 @@ def _copy_remote_symlink_to_local(*, destination: Path, link_target: str | None)
     destination.symlink_to(link_target)
 
 
+def _ensure_remote_dir(endpoint: types.Endpoint, path: str) -> None:
+    cmd = f"mkdir -p {shlex.quote(path)}"
+    result = ssh_transport.run_ssh_command(
+        host=_require_host(endpoint),
+        remote_command=["sh", "-c", cmd],
+        ssh_command=endpoint.ssh_command or "ssh",
+    )
+    if result.prompt_detected or result.auth_failed:
+        raise ExecutionError("SSH authentication prompt detected; refusing to continue.")
+    if result.exit_code != 0:
+        message = result.stderr.strip() or "Failed to create remote directory."
+        raise ExecutionError(message)
+
+
+def _scp_command(endpoint: types.Endpoint) -> str | list[str]:
+    cmd = endpoint.ssh_command
+    if cmd is None:
+        return "scp"
+    if isinstance(cmd, str) and cmd.strip() == "ssh":
+        return "scp"
+    return cmd
+
+
 def _remote_symlink_info(op: types.Operation, remote_path: str) -> tuple[bool, str | None]:
     meta = op.metadata or {}
     force_symlink = bool(meta.get("is_symlink"))
@@ -260,13 +288,13 @@ def _relay_remote_copy(
             host=_require_host(source),
             remote_path=_remote_path(Path(source.path), path),
             local_path=temp_file,
-            scp_command=source.ssh_command or "scp",
+            scp_command=_scp_command(source),
         )
         ssh_copy.copy_local_to_remote(
             host=_require_host(destination),
             local_path=temp_file,
             remote_path=_remote_path(Path(destination.path), path),
-            scp_command=destination.ssh_command or "scp",
+            scp_command=_scp_command(destination),
         )
     except ssh_copy.RemoteCopyError as exc:
         raise ExecutionError(str(exc)) from exc

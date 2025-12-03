@@ -96,8 +96,11 @@ class TestExecutor(unittest.TestCase):
                 source=local_endpoint,
                 destination=remote_endpoint,
             )
-            with mock.patch("simple_sync.engine.executor.ssh_copy.copy_local_to_remote") as mock_copy:
+            with mock.patch("simple_sync.engine.executor._ensure_remote_dir") as mock_mkdir, mock.patch(
+                "simple_sync.engine.executor.ssh_copy.copy_local_to_remote"
+            ) as mock_copy:
                 executor.apply_operations([op])
+        mock_mkdir.assert_called_once()
         mock_copy.assert_called_once()
 
     def test_delete_remote_runs_ssh_command(self):
@@ -188,6 +191,35 @@ class TestExecutor(unittest.TestCase):
             copied = dst_root / "link.txt"
             self.assertTrue(copied.is_symlink())
             self.assertEqual(os.readlink(copied), "../target.txt")
+
+    def test_copy_local_directory_to_remote_makes_dir_without_scp(self):
+        with tempfile.TemporaryDirectory() as src_tmp:
+            src_root = Path(src_tmp)
+            (src_root / "dir").mkdir()
+            local_endpoint = types.Endpoint(
+                id="local",
+                type=types.EndpointType.LOCAL,
+                path=str(src_root),
+            )
+            remote_endpoint = types.Endpoint(
+                id="remote",
+                type=types.EndpointType.SSH,
+                path="/remote",
+                host="example.com",
+                ssh_command="ssh",  # ensure scp fallback still used
+            )
+            op = types.Operation(
+                type=types.OperationType.COPY,
+                path="dir",
+                source=local_endpoint,
+                destination=remote_endpoint,
+            )
+            with mock.patch("simple_sync.engine.executor._ensure_remote_dir") as mock_mkdir, mock.patch(
+                "simple_sync.engine.executor.ssh_copy.copy_local_to_remote"
+            ) as mock_scp:
+                executor.apply_operations([op])
+        mock_mkdir.assert_called_once()
+        mock_scp.assert_not_called()
 
 
 if __name__ == "__main__":
