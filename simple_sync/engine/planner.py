@@ -31,6 +31,15 @@ class PlannerOutput:
     conflicts: List[types.Conflict] = field(default_factory=list)
 
 
+def _symlink_metadata(entry: types.FileEntry | None) -> Dict[str, object]:
+    if entry and entry.is_symlink:
+        data: Dict[str, object] = {"is_symlink": True}
+        if entry.link_target is not None:
+            data["link_target"] = entry.link_target
+        return data
+    return {}
+
+
 def plan(input_data: PlannerInput) -> PlannerOutput:
     """Compare current snapshots and last sync state, generating operations."""
     out = PlannerOutput()
@@ -84,7 +93,7 @@ def _classify_path(
                     path=path,
                     source=endpoint_a,
                     destination=endpoint_b,
-                    metadata={"reason": "new_or_modified_on_a"},
+                    metadata={**{"reason": "new_or_modified_on_a"}, **_symlink_metadata(entry_a)},
                 )
             )
         else:
@@ -104,7 +113,7 @@ def _classify_path(
                     path=path,
                     source=endpoint_b,
                     destination=endpoint_a,
-                    metadata={"reason": "new_or_modified_on_b"},
+                    metadata={**{"reason": "new_or_modified_on_b"}, **_symlink_metadata(entry_b)},
                 )
             )
         else:
@@ -129,6 +138,8 @@ def _classify_path(
                 merge_text_files
                 and not entry_a.is_dir
                 and not entry_b.is_dir
+                and not entry_a.is_symlink
+                and not entry_b.is_symlink
                 and merge.is_text_file(path)
                 and last_a is not None
                 and last_b is not None
@@ -160,7 +171,10 @@ def _classify_path(
                         path=path,
                         source=winner,
                         destination=loser,
-                        metadata={"reason": "newest_wins"},
+                        metadata={
+                            **{"reason": "newest_wins"},
+                            **_symlink_metadata(entry_a if winner is endpoint_a else entry_b),
+                        },
                     )
                 )
             elif policy == "prefer" and prefer_endpoint:
@@ -171,7 +185,10 @@ def _classify_path(
                         path=path,
                         source=winner,
                         destination=loser,
-                        metadata={"reason": "prefer_policy"},
+                        metadata={
+                            **{"reason": "prefer_policy"},
+                            **_symlink_metadata(entry_a if winner is endpoint_a else entry_b),
+                        },
                     )
                 )
             elif policy == "manual" and manual_behavior == "copy_both":
@@ -203,7 +220,7 @@ def _classify_path(
                     path=path,
                     source=endpoint_a,
                     destination=endpoint_b,
-                    metadata={"reason": "modified_on_a"},
+                    metadata={**{"reason": "modified_on_a"}, **_symlink_metadata(entry_a)},
                 )
             )
         elif _changed_since_last(entry_b, last_b):
@@ -213,7 +230,7 @@ def _classify_path(
                     path=path,
                     source=endpoint_b,
                     destination=endpoint_a,
-                    metadata={"reason": "modified_on_b"},
+                    metadata={**{"reason": "modified_on_b"}, **_symlink_metadata(entry_b)},
                 )
             )
     else:
@@ -239,13 +256,23 @@ def _classify_path(
 
 
 def _entries_equal(a: types.FileEntry, b: types.FileEntry) -> bool:
-    return (a.is_dir == b.is_dir) and (a.size == b.size) and (int(a.mtime) == int(b.mtime))
+    return (
+        a.is_dir == b.is_dir
+        and a.is_symlink == b.is_symlink
+        and (a.link_target or "") == (b.link_target or "")
+        and (a.size == b.size)
+        and (int(a.mtime) == int(b.mtime))
+    )
 
 
 def _changed_since_last(entry: types.FileEntry, last: state_store.StoredEntry | None) -> bool:
     if last is None:
         return True
     if entry.is_dir != last.is_dir:
+        return True
+    if entry.is_symlink != getattr(last, "is_symlink", False):
+        return True
+    if (entry.link_target or "") != (getattr(last, "link_target", None) or ""):
         return True
     if entry.size != last.size:
         return True
@@ -296,7 +323,11 @@ def _copy_both_operations(
             path=path,
             source=endpoint_a,
             destination=endpoint_b,
-            metadata={"reason": "manual_copy_both_copy", "target_suffix": suffix_a},
+            metadata={
+                "reason": "manual_copy_both_copy",
+                "target_suffix": suffix_a,
+                **_symlink_metadata(entry_a),
+            },
         )
     )
     operations.append(
@@ -305,7 +336,11 @@ def _copy_both_operations(
             path=path,
             source=endpoint_b,
             destination=endpoint_a,
-            metadata={"reason": "manual_copy_both_copy", "target_suffix": suffix_b},
+            metadata={
+                "reason": "manual_copy_both_copy",
+                "target_suffix": suffix_b,
+                **_symlink_metadata(entry_b),
+            },
         )
     )
     return operations

@@ -41,6 +41,8 @@ class FileEntry:
     is_dir: bool
     size: int
     mtime: float
+    is_symlink: bool = False
+    link_target: Optional[str] = None
     hash: Optional[str] = None
 
     def __post_init__(self) -> None:

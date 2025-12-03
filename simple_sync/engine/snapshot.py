@@ -69,13 +69,19 @@ def _is_ignored(rel_path: str, patterns: Sequence[str]) -> bool:
 
 
 def _make_entry(path: Path, rel_path: str, *, is_dir: bool) -> types.FileEntry:
-    stat = path.stat()
-    size = stat.st_size if not is_dir else 0
+    stat = path.lstat()  # never follow links; works for dangling symlinks
+    is_symlink = path.is_symlink()
+    link_target = os.readlink(path) if is_symlink else None
+    if is_symlink:
+        is_dir = False  # treat symlinks as files for planning purposes
+    size = 0 if (is_dir or is_symlink) else stat.st_size
     return types.FileEntry(
         path=rel_path,
         is_dir=is_dir,
         size=size,
         mtime=stat.st_mtime,
+        is_symlink=is_symlink,
+        link_target=link_target,
     )
 
 

@@ -7,7 +7,7 @@ from typing import Dict, Iterable, Sequence
 from simple_sync import types
 from .commands import MarkerResult, run_with_markers
 
-FIND_FORMAT = "%P|%y|%s|%T@\\n"
+FIND_FORMAT = "%P|%y|%s|%T@|%l\\n"
 
 
 class RemoteListingError(RuntimeError):
@@ -36,15 +36,24 @@ def list_remote_entries(
         line = line.strip()
         if not line:
             continue
-        try:
-            rel_path, type_char, size_str, mtime_str = line.split("|", 3)
-        except ValueError:
+        parts = line.split("|", 4)
+        if len(parts) < 4:
             continue
+        rel_path, type_char, size_str, mtime_str, *rest = parts
         rel_path = rel_path or "."
         is_dir = type_char == "d"
-        size = int(size_str) if not is_dir else 0
+        is_symlink = type_char == "l"
+        size = 0 if (is_dir or is_symlink) else int(size_str)
         mtime = float(mtime_str)
-        entry = types.FileEntry(path=rel_path, is_dir=is_dir, size=size, mtime=mtime)
+        link_target = rest[0] if rest else None
+        entry = types.FileEntry(
+            path=rel_path,
+            is_dir=is_dir,
+            size=size,
+            mtime=mtime,
+            is_symlink=is_symlink,
+            link_target=link_target or None,
+        )
         entries[entry.path] = entry
     return entries
 

@@ -147,6 +147,48 @@ class TestExecutor(unittest.TestCase):
         mock_pull.assert_called_once()
         mock_push.assert_called_once()
 
+    def test_copy_local_symlink_preserves_link(self):
+        with tempfile.TemporaryDirectory() as src_tmp, tempfile.TemporaryDirectory() as dst_tmp:
+            src_root = Path(src_tmp)
+            dst_root = Path(dst_tmp)
+            target = src_root / "target.txt"
+            target.write_text("contents")
+            link = src_root / "link.txt"
+            link.symlink_to(target.name)
+            op = types.Operation(
+                type=types.OperationType.COPY,
+                path="link.txt",
+                source=make_endpoint(src_root),
+                destination=make_endpoint(dst_root),
+            )
+            executor.apply_operations([op])
+            copied = dst_root / "link.txt"
+            self.assertTrue(copied.is_symlink())
+            self.assertEqual(os.readlink(copied), target.name)
+
+    def test_copy_remote_symlink_to_local_uses_symlink_metadata(self):
+        with tempfile.TemporaryDirectory() as dst_tmp:
+            dst_root = Path(dst_tmp)
+            source_endpoint = types.Endpoint(
+                id="source",
+                type=types.EndpointType.SSH,
+                path="/remote_src",
+                host="source.example.com",
+            )
+            op = types.Operation(
+                type=types.OperationType.COPY,
+                path="link.txt",
+                source=source_endpoint,
+                destination=make_endpoint(dst_root),
+                metadata={"is_symlink": True, "link_target": "../target.txt"},
+            )
+            with mock.patch("simple_sync.engine.executor.ssh_copy.copy_remote_to_local") as mock_pull:
+                executor.apply_operations([op])
+                mock_pull.assert_not_called()
+            copied = dst_root / "link.txt"
+            self.assertTrue(copied.is_symlink())
+            self.assertEqual(os.readlink(copied), "../target.txt")
+
 
 if __name__ == "__main__":
     unittest.main()

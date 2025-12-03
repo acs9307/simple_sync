@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
+import shlex
 import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Iterable, Optional
@@ -54,7 +56,9 @@ def _copy(op: types.Operation, *, dry_run: bool) -> None:
         if dry_run:
             return
         dst_path.parent.mkdir(parents=True, exist_ok=True)
-        if src_path.is_dir():
+        if src_path.is_symlink():
+            _copy_local_symlink(src_path, dst_path)
+        elif src_path.is_dir():
             dst_path.mkdir(parents=True, exist_ok=True)
         else:
             shutil.copy2(src_path, dst_path)
@@ -62,6 +66,13 @@ def _copy(op: types.Operation, *, dry_run: bool) -> None:
         if dry_run:
             return
         remote_target = _remote_path(dst_root, rel_path)
+        if (src_root / op.path).is_symlink():
+            _copy_symlink_to_remote(
+                source=src_root / op.path,
+                destination=remote_target,
+                endpoint=op.destination,
+            )
+            return
         try:
             ssh_copy.copy_local_to_remote(
                 host=_require_host(op.destination),
@@ -75,15 +86,22 @@ def _copy(op: types.Operation, *, dry_run: bool) -> None:
         if dry_run:
             return
         remote_source = _remote_path(src_root, op.path)
-        try:
-            ssh_copy.copy_remote_to_local(
-                host=_require_host(op.source),
-                remote_path=remote_source,
-                local_path=dst_root / rel_path,
-                scp_command=op.source.ssh_command or "scp",
+        is_symlink, link_target = _remote_symlink_info(op, remote_source)
+        if is_symlink:
+            _copy_remote_symlink_to_local(
+                destination=dst_root / rel_path,
+                link_target=link_target,
             )
-        except ssh_copy.RemoteCopyError as exc:
-            raise ExecutionError(str(exc)) from exc
+        else:
+            try:
+                ssh_copy.copy_remote_to_local(
+                    host=_require_host(op.source),
+                    remote_path=remote_source,
+                    local_path=dst_root / rel_path,
+                    scp_command=op.source.ssh_command or "scp",
+                )
+            except ssh_copy.RemoteCopyError as exc:
+                raise ExecutionError(str(exc)) from exc
     else:
         if dry_run:
             return
@@ -91,6 +109,7 @@ def _copy(op: types.Operation, *, dry_run: bool) -> None:
             source=op.source,
             destination=op.destination,
             path=rel_path,
+            metadata=op.metadata,
         )
 
 
@@ -102,7 +121,7 @@ def _delete(op: types.Operation, *, dry_run: bool) -> None:
         target = dst_root / op.path
         if dry_run or not target.exists():
             return
-        if target.is_dir():
+        if target.is_dir() and not target.is_symlink():
             shutil.rmtree(target)
         else:
             target.unlink()
@@ -133,6 +152,74 @@ def _mkdir(op: types.Operation, *, dry_run: bool) -> None:
     (dst_root / op.path).mkdir(parents=True, exist_ok=True)
 
 
+def _remove_existing(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink(missing_ok=True)
+
+
+def _copy_local_symlink(src_path: Path, dst_path: Path) -> None:
+    link_target = os.readlink(src_path)
+    _remove_existing(dst_path)
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    dst_path.symlink_to(link_target)
+
+
+def _copy_symlink_to_remote(
+    *,
+    source: Path | None = None,
+    destination: str,
+    endpoint: types.Endpoint,
+    link_target: str | None = None,
+) -> None:
+    if link_target is None:
+        if source is None:
+            raise ExecutionError("Symlink target is unknown; cannot create remote link.")
+        link_target = os.readlink(source)
+    parent = str(PurePosixPath(destination).parent)
+    remote_cmd = f"mkdir -p {shlex.quote(parent)} && ln -sfn {shlex.quote(link_target)} {shlex.quote(destination)}"
+    result = ssh_transport.run_ssh_command(
+        host=_require_host(endpoint),
+        remote_command=["sh", "-c", remote_cmd],
+        ssh_command=endpoint.ssh_command or "ssh",
+    )
+    if result.exit_code != 0:
+        message = result.stderr.strip() or "Failed to create remote symlink."
+        raise ExecutionError(message)
+
+
+def _copy_remote_symlink_to_local(*, destination: Path, link_target: str | None) -> None:
+    if link_target is None:
+        raise ExecutionError("Remote symlink target is unknown; cannot copy link.")
+    if destination.exists() or destination.is_symlink():
+        _remove_existing(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.symlink_to(link_target)
+
+
+def _remote_symlink_info(op: types.Operation, remote_path: str) -> tuple[bool, str | None]:
+    meta = op.metadata or {}
+    force_symlink = bool(meta.get("is_symlink"))
+    if meta.get("is_symlink"):
+        if meta.get("link_target") is not None:
+            return True, meta.get("link_target")
+        # fall through to probe the remote for the target
+    check_cmd = f"if [ -L {shlex.quote(remote_path)} ]; then readlink {shlex.quote(remote_path)}; fi"
+    result = ssh_transport.run_ssh_command(
+        host=_require_host(op.source),
+        remote_command=["sh", "-c", check_cmd],
+        ssh_command=op.source.ssh_command or "ssh",
+    )
+    if result.prompt_detected or result.auth_failed:
+        raise ExecutionError("SSH authentication prompt detected; refusing to continue.")
+    if result.exit_code == 0 and result.stdout:
+        return True, result.stdout.strip()
+    if force_symlink:
+        return True, None
+    return False, None
+
+
 def _remote_path(root: Path, rel_path: str) -> str:
     return str(PurePosixPath(str(root)) / rel_path)
 
@@ -143,7 +230,29 @@ def _require_host(endpoint: types.Endpoint) -> str:
     return endpoint.host
 
 
-def _relay_remote_copy(*, source: types.Endpoint, destination: types.Endpoint, path: str) -> None:
+def _relay_remote_copy(
+    *,
+    source: types.Endpoint,
+    destination: types.Endpoint,
+    path: str,
+    metadata: Optional[dict] = None,
+) -> None:
+    meta = metadata or {}
+    is_symlink = bool(meta.get("is_symlink"))
+    link_target = meta.get("link_target")
+    if not is_symlink:
+        # Fall back to querying the source to see if it's a symlink
+        remote_source = _remote_path(Path(source.path), path)
+        is_symlink, link_target = _remote_symlink_info(
+            types.Operation(type=types.OperationType.COPY, path=path, source=source, destination=destination),
+            remote_source,
+        )
+
+    if is_symlink:
+        dest_remote = _remote_path(Path(destination.path), path)
+        _copy_symlink_to_remote(destination=dest_remote, endpoint=destination, link_target=link_target)
+        return
+
     local_tmp = Path(tempfile.mkdtemp(prefix="simple_sync_relay"))
     try:
         temp_file = local_tmp / Path(path).name

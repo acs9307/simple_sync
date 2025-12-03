@@ -38,6 +38,19 @@ class TestSnapshotBuilder(unittest.TestCase):
             self.assertNotIn("ignored/file.txt", result.entries)
             self.assertNotIn("keep.tmp", result.entries)
 
+    def test_dangling_symlink_is_recorded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            target = base / "missing.txt"
+            link = base / "link.txt"
+            link.symlink_to(target)
+            result = snapshot.build_snapshot(base)
+        self.assertIn("link.txt", result.entries)
+        entry = result.entries["link.txt"]
+        self.assertTrue(entry.is_symlink)
+        self.assertFalse(entry.is_dir)
+        self.assertEqual(entry.size, 0)
+
     def test_missing_root_errors(self):
         with self.assertRaises(snapshot.SnapshotError):
             snapshot.build_snapshot("/path/that/does/not/exist")

@@ -10,7 +10,7 @@ from typing import Dict, List, Optional
 
 from simple_sync import config, types
 
-STATE_VERSION = 3
+STATE_VERSION = 4
 
 
 class StateStoreError(RuntimeError):
@@ -25,6 +25,8 @@ class StoredEntry:
     is_dir: bool
     size: int
     mtime: float
+    is_symlink: bool = False
+    link_target: Optional[str] = None
     hash: Optional[str] = None
 
 
@@ -68,7 +70,7 @@ class ProfileState:
     @classmethod
     def from_dict(cls, payload: Dict[str, object]) -> "ProfileState":
         version = payload.get("version", 1)
-        if version not in {1, 2, STATE_VERSION}:
+        if version not in {1, 2, 3, STATE_VERSION}:
             raise StateStoreError("Unsupported state file version.")
         profile = payload.get("profile")
         if not isinstance(profile, str):
@@ -87,6 +89,8 @@ class ProfileState:
                             is_dir=bool(entry_data.get("is_dir", False)),
                             size=int(entry_data.get("size", 0)),
                             mtime=float(entry_data.get("mtime", 0.0)),
+                            is_symlink=bool(entry_data.get("is_symlink", False)),
+                            link_target=entry_data.get("link_target"),
                             hash=entry_data.get("hash"),
                         )
                 endpoints[endpoint_id] = endpoint_entries
@@ -149,6 +153,8 @@ def record_entry(
         is_dir=entry.is_dir,
         size=entry.size,
         mtime=entry.mtime,
+        is_symlink=entry.is_symlink,
+        link_target=entry.link_target,
         hash=entry.hash,
     )
 
